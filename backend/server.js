@@ -1,20 +1,20 @@
 // ══════════════════════════════════════════════════════════════
-// DevisPro CI — server.js
+// DevisPro CI — server.js v2
 // Node.js v24 : tous les require() en tête de fichier (règle critique)
 // ══════════════════════════════════════════════════════════════
 require('dotenv').config();
 
-const express      = require('express');
-const cors         = require('cors');
-const rateLimit    = require('express-rate-limit');
-const { Pool }     = require('pg');
-const jwt          = require('jsonwebtoken');
-const bcrypt       = require('bcryptjs');
-const PDFDocument  = require('pdfkit');
+const express        = require('express');
+const cors           = require('cors');
+const rateLimit      = require('express-rate-limit');
+const { Pool }       = require('pg');
+const jwt            = require('jsonwebtoken');
+const bcrypt         = require('bcryptjs');
+const PDFDocument    = require('pdfkit');
 const { v4: uuidv4 } = require('uuid');
-const fs           = require('fs');
-const path         = require('path');
-const multer       = require('multer');
+const fs             = require('fs');
+const path           = require('path');
+const multer         = require('multer');
 
 // ── App ────────────────────────────────────────────────────────
 const app  = express();
@@ -22,7 +22,7 @@ const PORT = process.env.PORT || 3000;
 
 // ── Middleware ─────────────────────────────────────────────────
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use('/outputs', express.static(path.join(__dirname, 'outputs')));
 
@@ -66,11 +66,25 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// ── Admin auth middleware ──────────────────────────────────────
+function adminAuth(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header) return res.status(401).json({ error: 'Token admin manquant' });
+  const token = header.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (!decoded.admin) return res.status(403).json({ error: 'Accès refusé' });
+    next();
+  } catch {
+    res.status(401).json({ error: 'Token admin invalide' });
+  }
+}
+
 // ══════════════════════════════════════════════════════════════
 // ROUTES AUTH
 // ══════════════════════════════════════════════════════════════
 
-// POST /api/auth/register
+// POST /api/auth/register — v2 : statut en_attente par défaut
 app.post('/api/auth/register', async (req, res) => {
   const { nom, prenom, telephone, metier, password } = req.body;
   if (!nom || !telephone || !metier || !password) {
@@ -78,14 +92,15 @@ app.post('/api/auth/register', async (req, res) => {
   }
   try {
     const hash = await bcrypt.hash(password, 10);
-    const result = await pool.query(
-      `INSERT INTO artisans (id, nom, prenom, telephone, metier, password_hash, devis_count, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,0,NOW()) RETURNING id, nom, telephone, metier`,
+    await pool.query(
+      `INSERT INTO artisans (id, nom, prenom, telephone, metier, password_hash, devis_count, statut, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,0,'en_attente',NOW())`,
       [uuidv4(), nom, prenom || '', telephone, metier, hash]
     );
-    const artisan = result.rows[0];
-    const token = jwt.sign({ id: artisan.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.status(201).json({ token, artisan });
+    res.status(201).json({
+      message: "Inscription reçue. Votre compte est en attente de validation par l'administrateur. Vous serez notifié dès l'activation.",
+      statut: 'en_attente'
+    });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Ce numéro est déjà inscrit' });
     console.error(err);
@@ -93,17 +108,44 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// POST /api/auth/login
+// POST /api/auth/login — v2 : vérifie statut avant accès
 app.post('/api/auth/login', async (req, res) => {
   const { telephone, password } = req.body;
   try {
     const result = await pool.query('SELECT * FROM artisans WHERE telephone = $1', [telephone]);
     const artisan = result.rows[0];
     if (!artisan) return res.status(401).json({ error: 'Numéro ou mot de passe incorrect' });
+
     const valid = await bcrypt.compare(password, artisan.password_hash);
     if (!valid) return res.status(401).json({ error: 'Numéro ou mot de passe incorrect' });
+
+    // Vérifier statut
+    if (artisan.statut === 'en_attente') {
+      return res.status(403).json({
+        error: "Compte en attente de validation. L'administrateur activera votre compte sous 24h.",
+        statut: 'en_attente'
+      });
+    }
+    if (artisan.statut === 'suspendu') {
+      return res.status(403).json({
+        error: 'Compte suspendu. Contactez l\'administrateur.',
+        statut: 'suspendu'
+      });
+    }
+
     const token = jwt.sign({ id: artisan.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.json({ token, artisan: { id: artisan.id, nom: artisan.nom, telephone: artisan.telephone, metier: artisan.metier } });
+    res.json({
+      token,
+      artisan: {
+        id: artisan.id,
+        nom: artisan.nom,
+        telephone: artisan.telephone,
+        metier: artisan.metier,
+        plan: artisan.plan,
+        devis_count: artisan.devis_count,
+        statut: artisan.statut
+      }
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur serveur' });
@@ -114,11 +156,10 @@ app.post('/api/auth/login', async (req, res) => {
 // ROUTES PROFIL
 // ══════════════════════════════════════════════════════════════
 
-// GET /api/profil
 app.get('/api/profil', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier, logo_url, devis_count, plan FROM artisans WHERE id = $1',
+      'SELECT id, nom, prenom, telephone, metier, logo_url, devis_count, plan, statut FROM artisans WHERE id = $1',
       [req.user.id]
     );
     res.json(result.rows[0]);
@@ -127,7 +168,6 @@ app.get('/api/profil', authMiddleware, async (req, res) => {
   }
 });
 
-// PUT /api/profil
 app.put('/api/profil', authMiddleware, async (req, res) => {
   const { nom, prenom, telephone, metier } = req.body;
   try {
@@ -141,7 +181,6 @@ app.put('/api/profil', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/profil/logo
 app.post('/api/profil/logo', authMiddleware, upload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
   const logoUrl = `/uploads/${req.file.filename}`;
@@ -154,10 +193,9 @@ app.post('/api/profil/logo', authMiddleware, upload.single('logo'), async (req, 
 });
 
 // ══════════════════════════════════════════════════════════════
-// ROUTES TARIFS (autocomplétion)
+// ROUTES TARIFS
 // ══════════════════════════════════════════════════════════════
 
-// GET /api/tarifs?q=joint
 app.get('/api/tarifs', authMiddleware, async (req, res) => {
   const q = `%${(req.query.q || '').toLowerCase()}%`;
   try {
@@ -177,35 +215,30 @@ app.get('/api/tarifs', authMiddleware, async (req, res) => {
 // ROUTES DEVIS
 // ══════════════════════════════════════════════════════════════
 
-// POST /api/devis — créer un devis et générer le PDF
 app.post('/api/devis', authMiddleware, async (req, res) => {
-  const {
-    client_nom,
-    client_telephone,
-    objet,
-    type_travaux,        // ex: "carrelage", "plomberie"
-    lignes,              // [{ designation, quantite, unite, prix_unitaire }]
-    main_oeuvre,
-    acompte,
-    surfaces             // [{ nom_piece, longueur, largeur, surface }] — optionnel
-  } = req.body;
+  const { client_nom, client_telephone, objet, type_travaux, lignes, main_oeuvre, acompte, surfaces } = req.body;
 
   if (!client_nom || !lignes || !lignes.length) {
     return res.status(400).json({ error: 'Données incomplètes' });
   }
 
   try {
-    // ── Récupérer profil artisan ───────────────────────────────
     const artisanResult = await pool.query('SELECT * FROM artisans WHERE id=$1', [req.user.id]);
     const artisan = artisanResult.rows[0];
 
-    // ── Calculer totaux ────────────────────────────────────────
+    // Vérifier quota plan gratuit
+    if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
+      return res.status(403).json({
+        error: 'Quota gratuit atteint. Abonnez-vous pour continuer.',
+        quota_depasse: true
+      });
+    }
+
     const totalFournitures = lignes.reduce((sum, l) => sum + (l.quantite * l.prix_unitaire), 0);
     const totalHT = totalFournitures + (main_oeuvre || 0);
-    const numero = `DEV-${Date.now()}`;
-
-    // ── Sauvegarder en base ────────────────────────────────────
+    const numero  = `DEV-${Date.now()}`;
     const devisId = uuidv4();
+
     await pool.query(
       `INSERT INTO devis (id, artisan_id, numero, client_nom, client_telephone, objet,
         type_travaux, lignes, surfaces, main_oeuvre, acompte, total, statut, created_at)
@@ -215,7 +248,6 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
        main_oeuvre || 0, acompte || 0, totalHT]
     );
 
-    // ── Mettre à jour tarifs (autocomplétion) ─────────────────
     for (const l of lignes) {
       await pool.query(
         `INSERT INTO tarifs (id, artisan_id, designation, unite, prix_unitaire, usage_count)
@@ -226,30 +258,18 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
       );
     }
 
-    // ── Incrémenter compteur devis ─────────────────────────────
     await pool.query('UPDATE artisans SET devis_count=devis_count+1 WHERE id=$1', [req.user.id]);
 
-    // ── Générer PDF ────────────────────────────────────────────
     const outputDir = path.join(__dirname, 'outputs');
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
     const pdfPath = path.join(outputDir, `${devisId}.pdf`);
 
-    await generatePDF({
-      artisan, numero, client_nom, client_telephone, objet,
-      type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT, pdfPath
-    });
+    await generatePDF({ artisan, numero, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT, pdfPath });
 
-    // ── Mettre à jour chemin PDF ───────────────────────────────
     const pdfUrl = `/outputs/${devisId}.pdf`;
     await pool.query('UPDATE devis SET pdf_url=$1 WHERE id=$2', [pdfUrl, devisId]);
 
-    res.status(201).json({
-      id: devisId,
-      numero,
-      total: totalHT,
-      pdf_url: pdfUrl,
-      message: `Devis ${numero} créé avec succès`
-    });
+    res.status(201).json({ id: devisId, numero, total: totalHT, pdf_url: pdfUrl, message: `Devis ${numero} créé avec succès` });
 
   } catch (err) {
     console.error(err);
@@ -257,7 +277,6 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/devis — liste des devis
 app.get('/api/devis', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
@@ -271,7 +290,6 @@ app.get('/api/devis', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/devis/:id — détail d'un devis
 app.get('/api/devis/:id', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
@@ -286,48 +304,61 @@ app.get('/api/devis/:id', authMiddleware, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// ROUTE BOT CONVERSATION (IA Mistral)
+// ROUTE BOT CONVERSATION — v2 : quota + contact client + JSON robuste
 // ══════════════════════════════════════════════════════════════
 
-// POST /api/bot/message
 app.post('/api/bot/message', authMiddleware, async (req, res) => {
   const { message, history, devis_draft } = req.body;
 
-  // Récupérer profil artisan
-  const artisanResult = await pool.query(
-    'SELECT nom, metier FROM artisans WHERE id=$1', [req.user.id]
-  );
-  const artisan = artisanResult.rows[0];
+  try {
+    const artisanResult = await pool.query(
+      'SELECT nom, metier, plan, devis_count FROM artisans WHERE id=$1', [req.user.id]
+    );
+    const artisan = artisanResult.rows[0];
 
-  const systemPrompt = `Tu es DevisPro, un assistant vocal pour artisans en Côte d'Ivoire.
+    // Vérification quota plan gratuit
+    if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
+      return res.json({
+        reply: `🔒 Vous avez utilisé vos 3 devis gratuits.\n\nPour continuer à utiliser DevisPro CI, abonnez-vous au plan Starter (1 000 FCFA/mois) via Wave CI ou Orange Money.\n\nEnvoyez "STARTER" par WhatsApp pour activer votre abonnement.`,
+        action: null,
+        quota_depasse: true
+      });
+    }
+
+    const devisRestants = artisan.plan === 'gratuit'
+      ? ` [${3 - artisan.devis_count} devis gratuit${3 - artisan.devis_count > 1 ? 's' : ''} restant${3 - artisan.devis_count > 1 ? 's' : ''}]`
+      : '';
+
+    const systemPrompt = `Tu es DevisPro, un assistant pour artisans en Côte d'Ivoire.
 Tu aides ${artisan.nom} (${artisan.metier}) à créer des devis professionnels.
-Tu poses UNE question à la fois, de manière simple et directe.
+Tu poses UNE question à la fois, de manière simple et directe.${devisRestants}
 
 WORKFLOW DE CRÉATION DE DEVIS :
 1. Demande le nom du client
-2. Demande le type de travaux
-3. Si type = carrelage/peinture/faux plafond : propose le calcul de surface (longueur × largeur, pièce par pièce)
-4. Pour chaque fourniture : désignation → quantité → unité → prix unitaire → confirme → "Autre fourniture ?"
-5. Demande le coût de la main-d'œuvre
-6. Demande si un acompte est souhaité
-7. Résume le devis et demande confirmation
+2. Demande le numéro de téléphone du client (pour envoyer le devis par WhatsApp). Si pas de numéro, note null.
+3. Demande le type de travaux
+4. Si type = carrelage/peinture/faux plafond : propose le calcul de surface (longueur × largeur, pièce par pièce)
+5. Pour chaque fourniture : désignation → quantité → unité → prix unitaire → confirme → "Autre fourniture ?"
+6. Demande le coût de la main-d'œuvre
+7. Demande si un acompte est souhaité
+8. Résume le devis et demande confirmation
 
-RÈGLES :
+RÈGLES ABSOLUES :
 - Réponds TOUJOURS en français simple, comme on parle à Abidjan
 - UNE question par réponse, jamais deux
 - Si l'artisan dit "c'est tout" ou "non" après une fourniture, passe à la main-d'œuvre
-- Quand le devis est complet, réponds avec JSON : {"action":"create_devis","data":{...}}
+- Quand le devis est complet et CONFIRMÉ, réponds UNIQUEMENT avec ce JSON EXACT (rien avant, rien après, pas de backticks, pas de markdown) :
+{"action":"create_devis","data":{"client_nom":"NOM","client_telephone":"TEL_OU_NULL","type_travaux":"TYPE","lignes":[{"designation":"NOM","quantite":0,"unite":"UNITE","prix_unitaire":0}],"surfaces":[],"main_oeuvre":0,"acompte":0}}
 - Pour les surfaces, calcule automatiquement longueur × largeur et propose +10% pour chutes
 
-ÉTAT ACTUEL DU DEVIS EN COURS :
+ÉTAT ACTUEL DU DEVIS :
 ${JSON.stringify(devis_draft || {}, null, 2)}`;
 
-  const messages = [
-    ...(history || []).map(h => ({ role: h.role, content: h.content })),
-    { role: 'user', content: message }
-  ];
+    const messages = [
+      ...(history || []).map(h => ({ role: h.role, content: h.content })),
+      { role: 'user', content: message }
+    ];
 
-  try {
     const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -338,26 +369,110 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
         model: 'mistral-large-latest',
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
         temperature: 0.3,
-        max_tokens: 400
+        max_tokens: 600
       })
     });
 
     const data = await response.json();
-    const reply = data.choices[0].message.content;
+    const raw = data.choices[0].message.content.trim();
 
-    // Détecter si le bot a finalisé le devis
+    // ── Parser JSON robuste ────────────────────────────────────
+    const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
     let action = null;
-    if (reply.includes('"action":"create_devis"')) {
+
+    // Tentative 1 : JSON pur
+    try {
+      const parsed = JSON.parse(clean);
+      if (parsed.action === 'create_devis' && parsed.data) {
+        action = parsed;
+      }
+    } catch {
+      // Tentative 2 : JSON embarqué dans du texte
       try {
-        const jsonMatch = reply.match(/\{[\s\S]*\}/);
-        if (jsonMatch) action = JSON.parse(jsonMatch[0]);
+        const jsonMatch = clean.match(/\{[\s\S]*"action"\s*:\s*"create_devis"[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.action === 'create_devis' && parsed.data) action = parsed;
+        }
       } catch {}
     }
 
-    res.json({ reply, action });
+    // Si action détectée → ne pas renvoyer le JSON brut comme reply
+    if (action) {
+      return res.json({ reply: '✅ Parfait ! Je génère ton devis...', action });
+    }
+
+    res.json({ reply: clean, action: null });
+
   } catch (err) {
-    console.error(err);
+    console.error('[BOT]', err);
     res.status(500).json({ error: 'Erreur IA' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════
+// ROUTE PHOTO / PIXTRAL
+// ══════════════════════════════════════════════════════════════
+
+app.post('/api/bot/photo', authMiddleware, async (req, res) => {
+  const { image } = req.body;
+  if (!image) return res.status(400).json({ error: 'Image manquante' });
+
+  const base64Data = image.replace(/^data:image\/[a-z]+;base64,/, '');
+  const mimeMatch  = image.match(/^data:(image\/[a-z]+);base64,/);
+  const mimeType   = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+  const systemPrompt = `Tu es un assistant pour artisans en Côte d'Ivoire.
+Analyse l'image et retourne UNIQUEMENT un JSON valide, sans texte autour.
+
+Si c'est une PIÈCE ou un ESPACE :
+{"type":"piece","piece_detectee":"Salon","dimensions_estimees":{"longueur":4.5,"largeur":3.0},"surface_estimee":13.5,"confiance":"moyenne","notes":"description","type_travaux_suggere":"carrelage"}
+
+Si c'est un BON DE COMMANDE ou FACTURE :
+{"type":"document","lignes":[{"designation":"Carrelage 60x60","quantite":15,"unite":"m²","prix_unitaire":3500}],"fournisseur":"nom si visible","total_document":72500,"notes":""}
+
+Sinon :
+{"type":"inconnu","message":"Je ne peux pas analyser cette image pour un devis."}
+
+IMPORTANT : retourne SEULEMENT le JSON, rien d'autre.`;
+
+  try {
+    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: 'pixtral-large-latest',
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+            { type: 'text', text: systemPrompt }
+          ]
+        }],
+        temperature: 0.1,
+        max_tokens: 800
+      })
+    });
+
+    const data = await response.json();
+    if (!data.choices || !data.choices[0]) {
+      return res.status(500).json({ error: 'Réponse Pixtral invalide' });
+    }
+
+    const raw = data.choices[0].message.content.trim();
+    try {
+      const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      res.json(JSON.parse(clean));
+    } catch {
+      res.json({ type: 'inconnu', message: "Je n'ai pas pu analyser l'image. Réessaie avec une photo plus nette.", raw });
+    }
+  } catch (err) {
+    console.error('[PHOTO]', err);
+    res.status(500).json({ error: "Erreur lors de l'analyse de la photo" });
   }
 });
 
@@ -365,49 +480,34 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
 // GÉNÉRATEUR PDF
 // ══════════════════════════════════════════════════════════════
 
-function generatePDF({ artisan, numero, client_nom, client_telephone, objet,
-  type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT, pdfPath }) {
+function generatePDF({ artisan, numero, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT, pdfPath }) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const doc    = new PDFDocument({ margin: 50, size: 'A4' });
     const stream = fs.createWriteStream(pdfPath);
     doc.pipe(stream);
 
-    const BLUE  = '#1A3A5C';
-    const GOLD  = '#C9952B';
-    const GRAY  = '#F5F5F5';
-    const WHITE = '#FFFFFF';
-    const DARK  = '#1C1C1C';
-    const pageW = 595 - 100; // largeur utilisable
+    const BLUE = '#1A3A5C', GOLD = '#C9952B', GRAY = '#F5F5F5', WHITE = '#FFFFFF', DARK = '#1C1C1C';
+    const pageW = 495;
 
-    // ── En-tête ──────────────────────────────────────────────
     doc.rect(0, 0, 595, 90).fill(BLUE);
-    doc.fillColor(WHITE).fontSize(22).font('Helvetica-Bold')
-       .text('DevisPro CI', 50, 20);
+    doc.fillColor(WHITE).fontSize(22).font('Helvetica-Bold').text('DevisPro CI', 50, 20);
     doc.fontSize(10).font('Helvetica')
        .text(`${artisan.nom} ${artisan.prenom || ''} — ${artisan.metier}`, 50, 48)
        .text(`Tél : ${artisan.telephone}`, 50, 62);
-
-    doc.fillColor(GOLD).fontSize(10).font('Helvetica-Bold')
-       .text(numero, 400, 30, { align: 'right', width: 145 });
+    doc.fillColor(GOLD).fontSize(10).font('Helvetica-Bold').text(numero, 400, 30, { align: 'right', width: 145 });
     doc.fillColor(WHITE).font('Helvetica').fontSize(9)
        .text(`Date : ${new Date().toLocaleDateString('fr-FR')}`, 400, 48, { align: 'right', width: 145 })
        .text('Validité : 30 jours', 400, 62, { align: 'right', width: 145 });
 
-    // ── Bloc client ───────────────────────────────────────────
     doc.rect(50, 105, pageW, 60).fill(GRAY);
-    doc.fillColor(BLUE).fontSize(9).font('Helvetica-Bold')
-       .text('CLIENT', 60, 112);
-    doc.fillColor(DARK).font('Helvetica').fontSize(11)
-       .text(client_nom, 60, 126);
-    if (client_telephone) {
-      doc.fontSize(9).fillColor('#555555').text(`Tél : ${client_telephone}`, 60, 142);
-    }
+    doc.fillColor(BLUE).fontSize(9).font('Helvetica-Bold').text('CLIENT', 60, 112);
+    doc.fillColor(DARK).font('Helvetica').fontSize(11).text(client_nom, 60, 126);
+    if (client_telephone) doc.fontSize(9).fillColor('#555555').text(`Tél : ${client_telephone}`, 60, 142);
     if (objet) {
       doc.fillColor(GOLD).fontSize(9).font('Helvetica-Bold').text('OBJET', 320, 112);
       doc.fillColor(DARK).font('Helvetica').fontSize(10).text(objet, 320, 126, { width: 200 });
     }
 
-    // ── Surfaces (si carrelage) ───────────────────────────────
     let y = 185;
     if (surfaces && surfaces.length > 0) {
       doc.fillColor(BLUE).fontSize(9).font('Helvetica-Bold').text('SURFACES', 50, y);
@@ -420,11 +520,8 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet,
       y += 6;
     }
 
-    // ── Tableau lignes ────────────────────────────────────────
-    const colX   = [50, 230, 295, 360, 445];
-    const colW   = [180, 65,  65,  85,  100];
+    const colX = [50, 230, 295, 360, 445], colW = [180, 65, 65, 85, 100];
     const headers = ['Désignation', 'Qté', 'Unité', 'P.U (FCFA)', 'Total (FCFA)'];
-
     doc.rect(50, y, pageW, 22).fill(BLUE);
     headers.forEach((h, i) => {
       doc.fillColor(WHITE).fontSize(9).font('Helvetica-Bold')
@@ -434,15 +531,8 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet,
 
     lignes.forEach((l, idx) => {
       const total = l.quantite * l.prix_unitaire;
-      const bg = idx % 2 === 0 ? WHITE : GRAY;
-      doc.rect(50, y, pageW, 20).fill(bg);
-      const cells = [
-        l.designation,
-        String(l.quantite),
-        l.unite || 'u.',
-        Number(l.prix_unitaire).toLocaleString('fr-FR'),
-        Number(total).toLocaleString('fr-FR')
-      ];
+      doc.rect(50, y, pageW, 20).fill(idx % 2 === 0 ? WHITE : GRAY);
+      const cells = [l.designation, String(l.quantite), l.unite || 'u.', Number(l.prix_unitaire).toLocaleString('fr-FR'), Number(total).toLocaleString('fr-FR')];
       cells.forEach((c, i) => {
         doc.fillColor(DARK).font('Helvetica').fontSize(9)
            .text(c, colX[i], y + 6, { width: colW[i], align: i > 0 ? 'center' : 'left' });
@@ -450,22 +540,17 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet,
       y += 20;
     });
 
-    // Ligne main-d'œuvre
     if (main_oeuvre > 0) {
       doc.rect(50, y, pageW, 20).fill('#EEF4FA');
-      doc.fillColor(BLUE).font('Helvetica-Bold').fontSize(9)
-         .text("Main-d'œuvre", colX[0], y + 6, { width: colW[0] });
-      doc.fillColor(DARK).font('Helvetica').fontSize(9)
-         .text(Number(main_oeuvre).toLocaleString('fr-FR'), colX[4], y + 6, { width: colW[4], align: 'center' });
+      doc.fillColor(BLUE).font('Helvetica-Bold').fontSize(9).text("Main-d'œuvre", colX[0], y + 6, { width: colW[0] });
+      doc.fillColor(DARK).font('Helvetica').fontSize(9).text(Number(main_oeuvre).toLocaleString('fr-FR'), colX[4], y + 6, { width: colW[4], align: 'center' });
       y += 20;
     }
 
-    // Séparateur
     y += 10;
     doc.moveTo(50, y).lineTo(545, y).strokeColor(GOLD).lineWidth(1).stroke();
     y += 10;
 
-    // Totaux
     const totaux = [
       ['Sous-total fournitures', lignes.reduce((s, l) => s + l.quantite * l.prix_unitaire, 0)],
       ["Main-d'œuvre", main_oeuvre || 0],
@@ -473,11 +558,9 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet,
     ];
     if (acompte > 0) totaux.push(['Acompte demandé', acompte]);
 
-    totaux.forEach(([label, val], i) => {
+    totaux.forEach(([label, val]) => {
       const isTotal = label === 'TOTAL TTC';
-      if (isTotal) {
-        doc.rect(360, y - 2, pageW - 310, 22).fill(BLUE);
-      }
+      if (isTotal) doc.rect(360, y - 2, pageW - 310, 22).fill(BLUE);
       doc.fillColor(isTotal ? WHITE : DARK)
          .font(isTotal ? 'Helvetica-Bold' : 'Helvetica')
          .fontSize(isTotal ? 11 : 9)
@@ -486,72 +569,48 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet,
       y += isTotal ? 24 : 18;
     });
 
-    // ── Pied de page ──────────────────────────────────────────
     y += 20;
     doc.rect(50, y, pageW, 40).fill(GRAY);
     doc.fillColor('#555555').fontSize(8).font('Helvetica')
        .text('Paiement accepté : Wave CI · Orange Money · MTN Mobile Money', 60, y + 8)
-       .text('Ce devis est valable 30 jours à compter de sa date d\'émission.', 60, y + 22);
-
-    doc.fillColor(GOLD).fontSize(7).font('Helvetica')
-       .text('Généré par DevisPro CI', 50, 820, { align: 'center', width: pageW });
+       .text("Ce devis est valable 30 jours à compter de sa date d'émission.", 60, y + 22);
+    doc.fillColor(GOLD).fontSize(7).font('Helvetica').text('Généré par DevisPro CI', 50, 820, { align: 'center', width: pageW });
 
     doc.end();
     stream.on('finish', resolve);
     stream.on('error', reject);
   });
 }
+
 // ══════════════════════════════════════════════════════════════
-// ROUTES ADMIN — à ajouter dans server.js (avant app.listen)
+// ROUTES ADMIN
 // ══════════════════════════════════════════════════════════════
 
-// ── Middleware admin JWT ───────────────────────────────────────
-function adminAuth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header) return res.status(401).json({ error: 'Token admin manquant' });
-  const token = header.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (!decoded.admin) return res.status(403).json({ error: 'Accès refusé' });
-    next();
-  } catch {
-    res.status(401).json({ error: 'Token admin invalide' });
-  }
-}
-
-// POST /api/admin/login
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'devispro_admin_2026';
-  if (password !== ADMIN_PASSWORD) {
-    return res.status(401).json({ error: 'Mot de passe incorrect' });
-  }
+  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Mot de passe incorrect' });
   const token = jwt.sign({ admin: true }, process.env.JWT_SECRET, { expiresIn: '8h' });
   res.json({ token });
 });
 
-// GET /api/admin/stats
 app.get('/api/admin/stats', adminAuth, async (req, res) => {
   try {
-    const [artisans, devis, ca, plans] = await Promise.all([
+    const [artisans, devis, ca, plans, devis7j, artisans7j] = await Promise.all([
       pool.query('SELECT COUNT(*) FROM artisans'),
       pool.query('SELECT COUNT(*) FROM devis'),
       pool.query('SELECT COALESCE(SUM(total),0) AS total FROM devis'),
-      pool.query(`SELECT plan, COUNT(*) as count FROM artisans GROUP BY plan ORDER BY count DESC`)
+      pool.query('SELECT plan, COUNT(*) as count FROM artisans GROUP BY plan ORDER BY count DESC'),
+      pool.query(`SELECT COUNT(*) FROM devis WHERE created_at >= NOW() - INTERVAL '7 days'`),
+      pool.query(`SELECT COUNT(*) FROM artisans WHERE created_at >= NOW() - INTERVAL '7 days'`)
     ]);
-    const devis7j = await pool.query(
-      `SELECT COUNT(*) FROM devis WHERE created_at >= NOW() - INTERVAL '7 days'`
-    );
-    const artisans7j = await pool.query(
-      `SELECT COUNT(*) FROM artisans WHERE created_at >= NOW() - INTERVAL '7 days'`
-    );
     res.json({
-      total_artisans:  parseInt(artisans.rows[0].count),
-      total_devis:     parseInt(devis.rows[0].count),
+      total_artisans:   parseInt(artisans.rows[0].count),
+      total_devis:      parseInt(devis.rows[0].count),
       chiffre_affaires: parseInt(ca.rows[0].total),
-      devis_7j:        parseInt(devis7j.rows[0].count),
-      artisans_7j:     parseInt(artisans7j.rows[0].count),
-      plans:           plans.rows
+      devis_7j:         parseInt(devis7j.rows[0].count),
+      artisans_7j:      parseInt(artisans7j.rows[0].count),
+      plans:            plans.rows
     });
   } catch (err) {
     console.error('[ADMIN] stats error:', err);
@@ -559,7 +618,6 @@ app.get('/api/admin/stats', adminAuth, async (req, res) => {
   }
 });
 
-// GET /api/admin/artisans?page=1&search=
 app.get('/api/admin/artisans', adminAuth, async (req, res) => {
   const page   = parseInt(req.query.page) || 1;
   const limit  = 20;
@@ -568,31 +626,26 @@ app.get('/api/admin/artisans', adminAuth, async (req, res) => {
   try {
     const [rows, total] = await Promise.all([
       pool.query(
-        `SELECT id, nom, prenom, telephone, metier, plan, devis_count, created_at
+        `SELECT id, nom, prenom, telephone, metier, plan, devis_count, statut, created_at
          FROM artisans
          WHERE nom ILIKE $1 OR telephone ILIKE $1 OR metier ILIKE $1
          ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
         [search, limit, offset]
       ),
       pool.query(
-        `SELECT COUNT(*) FROM artisans WHERE nom ILIKE $1 OR telephone ILIKE $1 OR metier ILIKE $1`,
+        'SELECT COUNT(*) FROM artisans WHERE nom ILIKE $1 OR telephone ILIKE $1 OR metier ILIKE $1',
         [search]
       )
     ]);
     res.json({ artisans: rows.rows, total: parseInt(total.rows[0].count), page, limit });
   } catch (err) {
-    console.error('[ADMIN] artisans error:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// PUT /api/admin/artisans/:id/plan
 app.put('/api/admin/artisans/:id/plan', adminAuth, async (req, res) => {
   const { plan } = req.body;
-  const plans_valides = ['gratuit', 'starter', 'pro'];
-  if (!plans_valides.includes(plan)) {
-    return res.status(400).json({ error: 'Plan invalide' });
-  }
+  if (!['gratuit','starter','pro'].includes(plan)) return res.status(400).json({ error: 'Plan invalide' });
   try {
     await pool.query('UPDATE artisans SET plan=$1 WHERE id=$2', [plan, req.params.id]);
     res.json({ success: true });
@@ -601,7 +654,18 @@ app.put('/api/admin/artisans/:id/plan', adminAuth, async (req, res) => {
   }
 });
 
-// DELETE /api/admin/artisans/:id
+// PUT /api/admin/artisans/:id/statut — v2 : validation/suspension
+app.put('/api/admin/artisans/:id/statut', adminAuth, async (req, res) => {
+  const { statut } = req.body;
+  if (!['en_attente','actif','suspendu'].includes(statut)) return res.status(400).json({ error: 'Statut invalide' });
+  try {
+    await pool.query('UPDATE artisans SET statut=$1 WHERE id=$2', [statut, req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 app.delete('/api/admin/artisans/:id', adminAuth, async (req, res) => {
   try {
     await pool.query('DELETE FROM artisans WHERE id=$1', [req.params.id]);
@@ -611,7 +675,6 @@ app.delete('/api/admin/artisans/:id', adminAuth, async (req, res) => {
   }
 });
 
-// GET /api/admin/devis?page=1&search=
 app.get('/api/admin/devis', adminAuth, async (req, res) => {
   const page   = parseInt(req.query.page) || 1;
   const limit  = 20;
@@ -622,8 +685,7 @@ app.get('/api/admin/devis', adminAuth, async (req, res) => {
       pool.query(
         `SELECT d.id, d.numero, d.client_nom, d.objet, d.total, d.statut, d.created_at,
                 a.nom as artisan_nom, a.telephone as artisan_tel
-         FROM devis d
-         JOIN artisans a ON d.artisan_id = a.id
+         FROM devis d JOIN artisans a ON d.artisan_id = a.id
          WHERE d.client_nom ILIKE $1 OR d.numero ILIKE $1 OR a.nom ILIKE $1
          ORDER BY d.created_at DESC LIMIT $2 OFFSET $3`,
         [search, limit, offset]
@@ -636,25 +698,22 @@ app.get('/api/admin/devis', adminAuth, async (req, res) => {
     ]);
     res.json({ devis: rows.rows, total: parseInt(total.rows[0].count), page, limit });
   } catch (err) {
-    console.error('[ADMIN] devis error:', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
-// GET /api/admin/logs — dernières erreurs console (simulées via table)
 app.get('/api/admin/logs', adminAuth, async (req, res) => {
   try {
-    // Stats de santé système
-    const [pool_stats, recent_errors] = await Promise.all([
-      pool.query('SELECT COUNT(*) as connections FROM artisans'),
-      pool.query(
-        `SELECT 'Devis sans PDF' as type, COUNT(*) as count, MAX(created_at) as last_seen
-         FROM devis WHERE pdf_url IS NULL AND created_at > NOW() - INTERVAL '24h'
-         UNION ALL
-         SELECT 'Artisans inactifs (0 devis)' as type, COUNT(*) as count, MAX(created_at) as last_seen
-         FROM artisans WHERE devis_count = 0 AND created_at < NOW() - INTERVAL '7 days'`
-      )
-    ]);
+    const recent_errors = await pool.query(
+      `SELECT 'Devis sans PDF' as type, COUNT(*) as count, MAX(created_at) as last_seen
+       FROM devis WHERE pdf_url IS NULL AND created_at > NOW() - INTERVAL '24h'
+       UNION ALL
+       SELECT 'Artisans en attente' as type, COUNT(*) as count, MAX(created_at) as last_seen
+       FROM artisans WHERE statut = 'en_attente'
+       UNION ALL
+       SELECT 'Artisans inactifs (0 devis)' as type, COUNT(*) as count, MAX(created_at) as last_seen
+       FROM artisans WHERE devis_count = 0 AND created_at < NOW() - INTERVAL '7 days'`
+    );
     res.json({
       status: 'ok',
       db_connected: true,
@@ -668,127 +727,9 @@ app.get('/api/admin/logs', adminAuth, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════
-// FIN DES ROUTES ADMIN
-// ══════════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════════
-// ROUTE PHOTO / PIXTRAL — à ajouter dans server.js
-// Avant le bloc HEALTH CHECK
-// ══════════════════════════════════════════════════════════════
-
-// POST /api/bot/photo
-// Body : { image: "data:image/jpeg;base64,..." }
-app.post('/api/bot/photo', authMiddleware, async (req, res) => {
-  const { image } = req.body;
-  if (!image) return res.status(400).json({ error: 'Image manquante' });
-
-  // Extraire base64 pur (supprimer le préfixe data:image/...;base64,)
-  const base64Data = image.replace(/^data:image\/[a-z]+;base64,/, '');
-  const mimeMatch  = image.match(/^data:(image\/[a-z]+);base64,/);
-  const mimeType   = mimeMatch ? mimeMatch[1] : 'image/jpeg';
-
-  const systemPrompt = `Tu es un assistant pour artisans en Côte d'Ivoire.
-On t'envoie une photo prise sur chantier. Tu dois analyser l'image et retourner UNIQUEMENT un JSON valide, sans texte autour.
-
-Si c'est une PIÈCE ou un ESPACE (murs, sol, plafond visibles) :
-{
-  "type": "piece",
-  "piece_detectee": "Salon" | "Chambre" | "Cuisine" | "Couloir" | "Salle de bain" | "Autre",
-  "dimensions_estimees": { "longueur": 4.5, "largeur": 3.0 },
-  "surface_estimee": 13.5,
-  "confiance": "haute" | "moyenne" | "faible",
-  "notes": "Carrelage 60x60 visible, murs peints en blanc",
-  "type_travaux_suggere": "carrelage" | "peinture" | "faux plafond" | "plomberie" | "autre"
-}
-
-Si c'est un BON DE COMMANDE, FACTURE ou DOCUMENT avec des lignes de prix :
-{
-  "type": "document",
-  "lignes": [
-    { "designation": "Carrelage 60x60", "quantite": 15, "unite": "m²", "prix_unitaire": 3500 },
-    { "designation": "Colle carrelage", "quantite": 5, "unite": "sac", "prix_unitaire": 4000 }
-  ],
-  "fournisseur": "nom si visible",
-  "total_document": 72500,
-  "notes": "Facture partielle, TVA incluse"
-}
-
-Si c'est autre chose (photo floue, personne, objet non pertinent) :
-{
-  "type": "inconnu",
-  "message": "Je ne peux pas analyser cette image pour un devis. Prends une photo de la pièce ou d'un document de prix."
-}
-
-IMPORTANT : retourne SEULEMENT le JSON, rien d'autre.`;
-
-  try {
-    const response = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'pixtral-large-latest',
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image_url',
-                image_url: { url: `data:${mimeType};base64,${base64Data}` }
-              },
-              {
-                type: 'text',
-                text: systemPrompt
-              }
-            ]
-          }
-        ],
-        temperature: 0.1,
-        max_tokens: 800
-      })
-    });
-
-    const data = await response.json();
-
-    if (!data.choices || !data.choices[0]) {
-      return res.status(500).json({ error: 'Réponse Pixtral invalide' });
-    }
-
-    const raw = data.choices[0].message.content.trim();
-
-    // Parser le JSON retourné par Pixtral
-    let parsed;
-    try {
-      // Nettoyer les éventuels backticks markdown
-      const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-      parsed = JSON.parse(clean);
-    } catch {
-      // Si parsing échoue, retourner le texte brut
-      return res.json({
-        type: 'inconnu',
-        message: "Je n'ai pas pu analyser l'image correctement. Réessaie avec une photo plus nette.",
-        raw
-      });
-    }
-
-    res.json(parsed);
-
-  } catch (err) {
-    console.error('[PHOTO] Pixtral error:', err);
-    res.status(500).json({ error: 'Erreur lors de l\'analyse de la photo' });
-  }
-});
-
-// ══════════════════════════════════════════════════════════════
-// FIN ROUTE PHOTO
-// ══════════════════════════════════════════════════════════════
-
-
-// ══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ══════════════════════════════════════════════════════════════
-app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '1.0.0' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '2.0.0' }));
 
 // ── Start ──────────────────────────────────────────────────────
 app.listen(PORT, () => console.log(`DevisPro CI backend running on port ${PORT}`));
