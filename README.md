@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # DevisPro CI
 
 Bot conversationnel de génération de devis pour artisans en Côte d'Ivoire.
@@ -118,3 +119,6 @@ Elle peut être déployée séparément sur Netlify, ou hébergée dans le même
 | 3 — Intégration Wave CI | 1 sem | ⏳ À faire |
 | 4 — WhatsApp Business API | 1 sem | ⏳ À faire |
 | 5 — V2 (vocal, relances, factures) | 3 sem | ⏳ Backlog |
+=======
+# devispro-backend
+>>>>>>> 510ffa72a8d1289df7c7d6b155d52f10fc52941a
