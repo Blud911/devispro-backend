@@ -1,5 +1,5 @@
 // ── api.js — Client HTTP DevisPro CI ──────────────────────────
-const API_BASE = window.DEVISPRO_API_BASE || 'https://devispro-backend.onrender.com';
+const API_BASE = window.DEVISPRO_API_BASE || 'https://blud911-devispro-backend.onrender.com';
 
 const Api = {
   token: localStorage.getItem('dp_token'),
@@ -29,21 +29,28 @@ const Api = {
   },
 
   // Auth
-  login(telephone, password)                      { return this.request('POST', '/api/auth/login', { telephone, password }); },
-  register(nom, telephone, metier, password)       { return this.request('POST', '/api/auth/register', { nom, telephone, metier, password }); },
+  login(telephone, password)                { return this.request('POST', '/api/auth/login', { telephone, password }); },
+  register(nom, telephone, metier, password) { return this.request('POST', '/api/auth/register', { nom, telephone, metier, password }); },
 
   // Profil
-  getProfil()                                      { return this.request('GET',  '/api/profil'); },
-  updateProfil(data)                               { return this.request('PUT',  '/api/profil', data); },
+  getProfil()          { return this.request('GET', '/api/profil'); },
+  updateProfil(data)   { return this.request('PUT', '/api/profil', data); },
 
   // Bot
-  botMessage(message, history, devis_draft)        { return this.request('POST', '/api/bot/message', { message, history, devis_draft }); },
+  botMessage(message, history, devis_draft) {
+    return this.request('POST', '/api/bot/message', { message, history, devis_draft });
+  },
+
+  // Photo / Pixtral
+  analyzePhoto(base64Image) {
+    return this.request('POST', '/api/bot/photo', { image: base64Image });
+  },
 
   // Devis
-  createDevis(data)                                { return this.request('POST', '/api/devis', data); },
-  listDevis()                                      { return this.request('GET',  '/api/devis'); },
-  getDevis(id)                                     { return this.request('GET',  `/api/devis/${id}`); },
+  createDevis(data)  { return this.request('POST', '/api/devis', data); },
+  listDevis()        { return this.request('GET',  '/api/devis'); },
+  getDevis(id)       { return this.request('GET',  `/api/devis/${id}`); },
 
   // Tarifs
-  searchTarifs(q)                                  { return this.request('GET',  `/api/tarifs?q=${encodeURIComponent(q)}`); },
+  searchTarifs(q)    { return this.request('GET',  `/api/tarifs?q=${encodeURIComponent(q)}`); },
 };

@@ -23,18 +23,18 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── State ──────────────────────────────────────────────────────
-let authMode   = 'login'; // 'login' | 'register'
+let authMode   = 'login';
 let currentTab = 'chat';
 
 // ── Auth ───────────────────────────────────────────────────────
 function toggleAuthMode() {
   authMode = authMode === 'login' ? 'register' : 'login';
-  const rf = document.getElementById('register-fields');
+  const rf   = document.getElementById('register-fields');
   const btn  = document.getElementById('auth-submit-btn');
   const link = document.getElementById('auth-toggle-link');
-  rf.style.display = authMode === 'register' ? 'flex' : 'none';
-  btn.textContent  = authMode === 'register' ? 'Créer mon compte' : 'Se connecter';
-  link.innerHTML   = authMode === 'register'
+  rf.style.display  = authMode === 'register' ? 'flex' : 'none';
+  btn.textContent   = authMode === 'register' ? 'Créer mon compte' : 'Se connecter';
+  link.innerHTML    = authMode === 'register'
     ? 'Déjà inscrit ? <span onclick="toggleAuthMode()">Se connecter</span>'
     : 'Pas encore inscrit ? <span onclick="toggleAuthMode()">Créer un compte</span>';
 }
@@ -166,6 +166,115 @@ function handleKey(e) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// RECONNAISSANCE VOCALE
+// ══════════════════════════════════════════════════════════════
+
+let recognition    = null;
+let isListening    = false;
+let pendingTranscript = null; // texte en attente de confirmation
+
+function initSpeech() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return null;
+  const r = new SpeechRecognition();
+  r.lang          = 'fr-FR';
+  r.continuous    = false;
+  r.interimResults = true;
+
+  r.onstart = () => {
+    isListening = true;
+    setMicState('listening');
+  };
+
+  r.onresult = (e) => {
+    let interim = '';
+    let final   = '';
+    for (const res of e.results) {
+      if (res.isFinal) final   += res[0].transcript;
+      else             interim += res[0].transcript;
+    }
+    // Affiche en temps réel dans l'input
+    const inp = document.getElementById('msg-input');
+    inp.value = final || interim;
+    autoResize(inp);
+  };
+
+  r.onend = () => {
+    isListening = false;
+    setMicState('idle');
+    const transcript = document.getElementById('msg-input').value.trim();
+    if (transcript) {
+      showVoiceConfirm(transcript);
+    }
+  };
+
+  r.onerror = (e) => {
+    isListening = false;
+    setMicState('idle');
+    if (e.error !== 'no-speech') {
+      appendMessage('bot', "Micro non accessible. Vérifie les permissions.");
+    }
+  };
+
+  return r;
+}
+
+function toggleMic() {
+  if (!recognition) recognition = initSpeech();
+  if (!recognition) {
+    alert("Ton navigateur ne supporte pas la reconnaissance vocale. Utilise Chrome.");
+    return;
+  }
+  if (isListening) {
+    recognition.stop();
+  } else {
+    // Effacer confirmation en cours si elle existe
+    hideVoiceConfirm();
+    document.getElementById('msg-input').value = '';
+    recognition.start();
+  }
+}
+
+function setMicState(state) {
+  const btn = document.getElementById('mic-btn');
+  if (!btn) return;
+  if (state === 'listening') {
+    btn.classList.add('listening');
+    btn.title = 'Parle... (clic pour arrêter)';
+  } else {
+    btn.classList.remove('listening');
+    btn.title = 'Parler';
+  }
+}
+
+// ── Confirmation vocale ────────────────────────────────────────
+function showVoiceConfirm(transcript) {
+  pendingTranscript = transcript;
+  const zone = document.getElementById('voice-confirm');
+  const txt  = document.getElementById('voice-confirm-text');
+  txt.textContent  = `"${transcript}"`;
+  zone.style.display = 'flex';
+}
+
+function hideVoiceConfirm() {
+  const zone = document.getElementById('voice-confirm');
+  zone.style.display = 'none';
+  pendingTranscript  = null;
+}
+
+function confirmVoice(confirmed) {
+  hideVoiceConfirm();
+  if (confirmed && pendingTranscript) {
+    // déjà dans l'input, on envoie directement
+    sendMessage();
+  } else {
+    // Annuler → vider l'input et relancer le micro
+    document.getElementById('msg-input').value = '';
+    toggleMic();
+  }
+}
+
 // ── Bot interaction ────────────────────────────────────────────
 async function startBotGreeting(artisan) {
   Bot.reset();
@@ -180,6 +289,7 @@ function newDevis() {
   Bot.reset();
   document.getElementById('chat').innerHTML = '';
   setQuickReplies([]);
+  hideVoiceConfirm();
   showTyping();
   setTimeout(() => {
     hideTyping();
@@ -196,6 +306,7 @@ async function sendMessage() {
   inp.value = '';
   autoResize(inp);
   setQuickReplies([]);
+  hideVoiceConfirm();
   document.getElementById('send-btn').disabled = true;
 
   appendMessage('user', text);
@@ -206,7 +317,6 @@ async function sendMessage() {
     hideTyping();
 
     if (finalAction) {
-      // Créer le devis côté API
       try {
         const res = await Api.createDevis(finalAction);
         appendMessage('bot', reply);
@@ -249,5 +359,4 @@ function showTab(tab) {
   document.querySelectorAll('.nav-item').forEach((el, i) => {
     el.classList.toggle('active', ['chat','devis','profil'][i] === tab);
   });
-  // TODO: implémenter les vues devis et profil
 }
