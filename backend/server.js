@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════
-// DevisPro CI — server.js v4.4
+// DevisPro CI — server.js v4.5
 // Node.js v24 : tous les require() en tête de fichier (règle critique)
-// v4.4 : fix formatage nombres FCFA (espace insécable → regex)
+// v4.5 : lien partage court /d/XXXXXXXX (8 cars) stocké en base
 // ══════════════════════════════════════════════════════════════
 require('dotenv').config();
 
@@ -23,9 +23,17 @@ const PORT        = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || 'https://blud911-devispro-backend.onrender.com';
 
 // ── Formatage FCFA ─────────────────────────────────────────────
-// ✅ v4.4 : espace simple ASCII — PDFKit rend toLocaleString mal
 function fcfa(n) {
   return String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+// ── Code partage court ─────────────────────────────────────────
+// ✅ v4.5 : 8 caractères alphanumériques lisibles
+function makeShareCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  return code;
 }
 
 // ── Middleware ─────────────────────────────────────────────────
@@ -104,8 +112,7 @@ function parseJson(val) {
 }
 
 // ══════════════════════════════════════════════════════════════
-// CRON QUOTIDIEN — expire les artisans abonnés non réabonnés
-// plan gratuit ignoré (pas d'expires_at)
+// CRON QUOTIDIEN
 // ══════════════════════════════════════════════════════════════
 async function expireArtisans() {
   try {
@@ -134,7 +141,6 @@ setInterval(expireArtisans, 24 * 60 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════
 // GÉNÉRATEUR PDF
-// ✅ v4.4 : fcfa() partout — plus d'espace insécable
 // ══════════════════════════════════════════════════════════════
 function generatePDF({ artisan, numero, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT, res }) {
   return new Promise((resolve, reject) => {
@@ -196,10 +202,8 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
     lignes.forEach((l, idx) => {
       const total = l.quantite * l.prix_unitaire;
       doc.rect(50, y, pageW, 20).fill(idx % 2 === 0 ? WHITE : GRAY);
-      // ✅ v4.4 : fcfa() au lieu de toLocaleString
       [l.designation, String(l.quantite), l.unite || 'u.',
-       fcfa(l.prix_unitaire),
-       fcfa(total)
+       fcfa(l.prix_unitaire), fcfa(total)
       ].forEach((c, i) => {
         doc.fillColor(DARK).font('Helvetica').fontSize(9)
            .text(c, colX[i], y + 6, { width: colW[i], align: i > 0 ? 'center' : 'left' });
@@ -213,7 +217,6 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
       doc.fillColor(BLUE).font('Helvetica-Bold').fontSize(9)
          .text("Main-d'œuvre", colX[0], y + 6, { width: colW[0] });
       doc.fillColor(DARK).font('Helvetica').fontSize(9)
-         // ✅ v4.4
          .text(fcfa(main_oeuvre), colX[4], y + 6, { width: colW[4], align: 'center' });
       y += 20;
     }
@@ -237,7 +240,6 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
          .font(isTotal ? 'Helvetica-Bold' : 'Helvetica')
          .fontSize(isTotal ? 11 : 9)
          .text(label, 365, y + (isTotal ? 5 : 2), { width: 120 })
-         // ✅ v4.4
          .text(`${fcfa(val)} FCFA`, 490, y + (isTotal ? 5 : 2), { width: 50, align: 'right' });
       y += isTotal ? 24 : 18;
     });
@@ -480,6 +482,7 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
   }
 });
 
+// GET /api/devis/:id/pdf — PDF privé avec token JWT
 app.get('/api/devis/:id/pdf', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Token manquant' });
@@ -503,10 +506,9 @@ app.get('/api/devis/:id/pdf', async (req, res) => {
     const artisanResult = await pool.query(
       'SELECT id, nom, prenom, telephone, metier FROM artisans WHERE id=$1', [userId]
     );
-    const artisan = artisanResult.rows[0];
 
     await generatePDF({
-      artisan,
+      artisan:          artisanResult.rows[0],
       numero:           devis.numero,
       client_nom:       devis.client_nom,
       client_telephone: devis.client_telephone,
@@ -525,23 +527,42 @@ app.get('/api/devis/:id/pdf', async (req, res) => {
   }
 });
 
+// ✅ v4.5 : POST /api/devis/:id/share — génère code court 8 chars
 app.post('/api/devis/:id/share', authMiddleware, async (req, res) => {
   try {
     const devisResult = await pool.query(
-      'SELECT id, numero, client_nom, total FROM devis WHERE id=$1 AND artisan_id=$2',
+      'SELECT id, numero FROM devis WHERE id=$1 AND artisan_id=$2',
       [req.params.id, req.user.id]
     );
     if (!devisResult.rows.length) return res.status(404).json({ error: 'Devis introuvable' });
 
-    const devis      = devisResult.rows[0];
-    const shareToken = jwt.sign(
-      { devis_id: devis.id, artisan_id: req.user.id, share: true },
-      process.env.JWT_SECRET,
-      { expiresIn: '7d' }
+    // Réutiliser un code existant non expiré si disponible
+    const existing = await pool.query(
+      `SELECT id FROM devis_partages WHERE devis_id=$1 AND expires_at > NOW() LIMIT 1`,
+      [req.params.id]
     );
+
+    let shareCode;
+    if (existing.rows.length) {
+      shareCode = existing.rows[0].id;
+    } else {
+      // Générer un code unique
+      let unique = false;
+      while (!unique) {
+        shareCode = makeShareCode();
+        const check = await pool.query('SELECT id FROM devis_partages WHERE id=$1', [shareCode]);
+        if (!check.rows.length) unique = true;
+      }
+      await pool.query(
+        `INSERT INTO devis_partages (id, devis_id, artisan_id, expires_at, created_at)
+         VALUES ($1,$2,$3,NOW() + INTERVAL '7 days',NOW())`,
+        [shareCode, req.params.id, req.user.id]
+      );
+    }
+
     res.json({
-      share_url:  `${BACKEND_URL}/api/devis/view/${shareToken}`,
-      numero:     devis.numero,
+      share_url:  `${BACKEND_URL}/d/${shareCode}`,
+      code:       shareCode,
       expires_in: '7 jours'
     });
   } catch (err) {
@@ -550,44 +571,47 @@ app.post('/api/devis/:id/share', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/devis/view/:shareToken', async (req, res) => {
+// ✅ v4.5 : GET /d/:code — lien court public, affiche le PDF
+app.get('/d/:code', async (req, res) => {
   try {
-    const decoded = jwt.verify(req.params.shareToken, process.env.JWT_SECRET);
-    if (!decoded.share) return res.status(403).json({ error: 'Lien invalide' });
-
-    const devisResult = await pool.query(
-      'SELECT * FROM devis WHERE id=$1 AND artisan_id=$2',
-      [decoded.devis_id, decoded.artisan_id]
+    const partageResult = await pool.query(
+      `SELECT dp.*, d.*, a.nom, a.prenom, a.telephone, a.metier
+       FROM devis_partages dp
+       JOIN devis d ON dp.devis_id = d.id
+       JOIN artisans a ON dp.artisan_id = a.id
+       WHERE dp.id=$1 AND dp.expires_at > NOW()`,
+      [req.params.code.toUpperCase()]
     );
-    if (!devisResult.rows.length) return res.status(404).json({ error: 'Devis introuvable' });
 
-    const devis         = devisResult.rows[0];
-    const artisanResult = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier FROM artisans WHERE id=$1',
-      [decoded.artisan_id]
-    );
-    const artisan = artisanResult.rows[0];
+    if (!partageResult.rows.length) {
+      return res.status(410).send(`
+        <html><body style="font-family:sans-serif;text-align:center;padding:60px">
+          <h2>Lien expiré ou invalide</h2>
+          <p>Ce devis n'est plus disponible.</p>
+        </body></html>
+      `);
+    }
+
+    const row     = partageResult.rows[0];
+    const artisan = { id: row.artisan_id, nom: row.nom, prenom: row.prenom, telephone: row.telephone, metier: row.metier };
 
     await generatePDF({
       artisan,
-      numero:           devis.numero,
-      client_nom:       devis.client_nom,
-      client_telephone: devis.client_telephone,
-      objet:            devis.objet,
-      type_travaux:     devis.type_travaux,
-      lignes:           parseJson(devis.lignes),
-      surfaces:         parseJson(devis.surfaces),
-      main_oeuvre:      devis.main_oeuvre,
-      acompte:          devis.acompte,
-      totalHT:          devis.total,
+      numero:           row.numero,
+      client_nom:       row.client_nom,
+      client_telephone: row.client_telephone,
+      objet:            row.objet,
+      type_travaux:     row.type_travaux,
+      lignes:           parseJson(row.lignes),
+      surfaces:         parseJson(row.surfaces),
+      main_oeuvre:      row.main_oeuvre,
+      acompte:          row.acompte,
+      totalHT:          row.total,
       res
     });
   } catch (err) {
-    console.error('[VIEW]', err);
-    if (!res.headersSent) {
-      res.status(err.name === 'TokenExpiredError' ? 410 : 500)
-         .json({ error: err.name === 'TokenExpiredError' ? 'Lien expiré' : 'Erreur serveur' });
-    }
+    console.error('[/d/]', err);
+    if (!res.headersSent) res.status(500).send('Erreur serveur');
   }
 });
 
@@ -674,7 +698,8 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}` },
       body: JSON.stringify({
-        model: 'mistral-large-latest', messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        model: 'mistral-large-latest',
+        messages: [{ role: 'system', content: systemPrompt }, ...messages],
         temperature: 0.3, max_tokens: 600
       })
     });
@@ -913,6 +938,6 @@ app.delete('/api/admin/codes/:id', adminAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ══════════════════════════════════════════════════════════════
-app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '4.4.0' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '4.5.0' }));
 
-app.listen(PORT, () => console.log(`DevisPro CI backend v4.4 running on port ${PORT}`));
+app.listen(PORT, () => console.log(`DevisPro CI backend v4.5 running on port ${PORT}`));
