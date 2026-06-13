@@ -4,24 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>DevisPro CI — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css"/>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --blue:  #1A3A5C;
-      --blue2: #2A5A8C;
-      --gold:  #C9952B;
-      --gold2: #F0B84A;
-      --bg:    #F0F4F8;
-      --white: #FFFFFF;
-      --dark:  #1C1C1C;
-      --gray:  #8A97A8;
-      --lgray: #E8EDF2;
-      --green: #38A169;
-      --red:   #E53E3E;
-      --r:     10px;
-      --sidebar: 220px;
+      --blue:  #1A3A5C; --blue2: #2A5A8C;
+      --gold:  #C9952B; --gold2: #F0B84A;
+      --bg:    #F0F4F8; --white: #FFFFFF;
+      --dark:  #1C1C1C; --gray:  #8A97A8;
+      --lgray: #E8EDF2; --green: #0E9E6E;
+      --green2:#12C487; --red:   #E53E3E;
+      --amber: #F59E0B; --r: 10px; --sidebar: 220px;
     }
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--dark); min-height: 100vh; }
+    body { font-family: 'DM Sans', system-ui, sans-serif; background: var(--bg); color: var(--dark); min-height: 100vh; }
 
     /* LOGIN */
     #login-screen { position: fixed; inset: 0; background: var(--blue); display: flex; align-items: center; justify-content: center; z-index: 100; }
@@ -37,117 +34,153 @@
 
     /* LAYOUT */
     #admin-app { display: none; min-height: 100vh; }
-
-    /* SIDEBAR */
-    .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar); background: var(--blue); display: flex; flex-direction: column; box-shadow: 2px 0 12px rgba(0,0,0,0.15); z-index: 50; }
+    .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar); background: var(--blue); display: flex; flex-direction: column; box-shadow: 2px 0 12px rgba(0,0,0,0.15); z-index: 50; overflow-y: auto; }
     .sidebar-logo { display: flex; align-items: center; gap: 10px; padding: 20px 16px; border-bottom: 1px solid rgba(255,255,255,0.1); }
     .sidebar-logo-icon { width: 32px; height: 32px; background: var(--gold); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: 800; color: var(--white); flex-shrink: 0; }
-    .sidebar-logo-text { color: var(--white); font-weight: 700; font-size: 14px; }
+    .sidebar-logo-name { color: var(--white); font-weight: 700; font-size: 14px; }
     .sidebar-logo-sub  { color: rgba(255,255,255,0.4); font-size: 10px; }
-    .sidebar-nav { flex: 1; padding: 16px 0; }
+    .sidebar-nav { flex: 1; padding: 12px 0; }
     .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; color: rgba(255,255,255,0.6); cursor: pointer; transition: all 0.15s; font-size: 13px; font-weight: 500; border: none; background: none; width: 100%; text-align: left; }
     .nav-item:hover  { background: rgba(255,255,255,0.08); color: var(--white); }
     .nav-item.active { background: rgba(201,149,43,0.2); color: var(--white); border-right: 3px solid var(--gold); }
-    .nav-item-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+    .nav-item i { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
     .sidebar-footer { padding: 16px; border-top: 1px solid rgba(255,255,255,0.1); }
+    .badge-live { display: flex; align-items: center; gap: 6px; background: rgba(18,196,135,0.15); border: 1px solid var(--green2); border-radius: 20px; padding: 4px 10px; font-size: 11px; color: var(--green2); font-weight: 600; margin-bottom: 10px; }
+    .badge-live .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green2); animation: blink 2s infinite; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.4} }
     .logout-btn { width: 100%; padding: 8px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.2); background: transparent; color: rgba(255,255,255,0.6); font-size: 12px; cursor: pointer; }
-    .logout-btn:hover { background: rgba(255,255,255,0.1); color: var(--white); }
 
     /* MAIN */
     .main { margin-left: var(--sidebar); padding: 28px; min-height: 100vh; }
-    .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 28px; flex-wrap: wrap; gap: 12px; }
     .topbar-title { font-size: 22px; font-weight: 800; color: var(--blue); }
     .topbar-sub   { color: var(--gray); font-size: 13px; margin-top: 2px; }
-    .badge { display: inline-flex; align-items: center; gap: 6px; background: var(--green); color: var(--white); font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px; }
-
-    /* STAT CARDS */
-    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 16px; margin-bottom: 28px; }
-    .stat-card { background: var(--white); border-radius: var(--r); padding: 20px; border: 1px solid var(--lgray); display: flex; align-items: flex-start; gap: 14px; transition: box-shadow 0.2s; }
-    .stat-card:hover { box-shadow: 0 4px 16px rgba(26,58,92,0.08); }
-    .stat-icon { width: 42px; height: 42px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
-    .stat-icon.blue   { background: rgba(26,58,92,0.1); }
-    .stat-icon.gold   { background: rgba(201,149,43,0.12); }
-    .stat-icon.green  { background: rgba(56,161,105,0.12); }
-    .stat-icon.purple { background: rgba(128,90,213,0.12); }
-    .stat-value { font-size: 26px; font-weight: 800; color: var(--blue); line-height: 1; }
-    .stat-label { font-size: 12px; color: var(--gray); margin-top: 4px; }
-    .stat-delta { font-size: 11px; color: var(--green); margin-top: 4px; font-weight: 600; }
-
-    /* SECTIONS */
     .section { display: none; }
     .section.active { display: block; }
 
+    /* STAT CARDS */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap: 14px; margin-bottom: 24px; }
+    .stat-card { background: var(--white); border-radius: var(--r); padding: 18px; border: 1px solid var(--lgray); display: flex; align-items: flex-start; gap: 12px; }
+    .stat-icon { width: 38px; height: 38px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+    .stat-icon.blue   { background: rgba(26,58,92,0.1); }
+    .stat-icon.gold   { background: rgba(201,149,43,0.12); }
+    .stat-icon.green  { background: rgba(14,158,110,0.1); }
+    .stat-icon.amber  { background: rgba(245,158,11,0.1); }
+    .stat-icon.red    { background: rgba(229,62,62,0.1); }
+    .stat-value { font-size: 24px; font-weight: 800; color: var(--blue); font-family: 'DM Mono', monospace; }
+    .stat-value.green { color: var(--green); }
+    .stat-value.amber { color: var(--amber); }
+    .stat-value.red   { color: var(--red); }
+    .stat-label { font-size: 11px; color: var(--gray); margin-top: 3px; }
+    .stat-delta { font-size: 11px; color: var(--green); font-weight: 600; margin-top: 3px; }
+
     /* CARD */
     .card { background: var(--white); border-radius: var(--r); border: 1px solid var(--lgray); overflow: hidden; margin-bottom: 20px; }
-    .card-header { padding: 16px 20px; border-bottom: 1px solid var(--lgray); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-    .card-title { font-size: 14px; font-weight: 700; color: var(--blue); }
-    .card-body  { padding: 0; }
+    .card-header { padding: 16px 20px; border-bottom: 1px solid var(--lgray); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+    .card-title  { font-size: 14px; font-weight: 700; color: var(--blue); display: flex; align-items: center; gap: 8px; }
+    .card-body   { padding: 20px; }
 
-    /* SEARCH */
-    .search-input { padding: 7px 12px; border-radius: 7px; border: 1.5px solid var(--lgray); font-size: 13px; outline: none; font-family: inherit; min-width: 200px; transition: border-color 0.15s; }
+    /* FORM */
+    .form-label  { font-size: 11px; color: var(--gray); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 6px; }
+    .form-input, .form-select { width: 100%; padding: 10px 13px; border-radius: 8px; border: 1.5px solid var(--lgray); background: var(--bg); color: var(--dark); font-size: 13px; outline: none; font-family: inherit; margin-bottom: 12px; transition: border-color 0.15s; }
+    .form-input:focus, .form-select:focus { border-color: var(--blue); background: var(--white); }
+    .form-input.mono { font-family: 'DM Mono', monospace; letter-spacing: 1px; }
+    .form-row { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 12px; }
+    .form-row .form-input, .form-row .form-select { margin-bottom: 0; }
+    .w80 { width: 80px !important; flex-shrink: 0; text-align: center; }
+
+    /* BUTTONS */
+    .btn { padding: 9px 16px; border-radius: 8px; border: none; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary   { background: var(--blue); color: var(--white); }
+    .btn-gold      { background: var(--gold); color: var(--white); }
+    .btn-secondary { background: var(--lgray); color: var(--dark); }
+    .btn-green     { background: rgba(14,158,110,0.12); color: var(--green); border: 1px solid rgba(14,158,110,0.3); }
+    .btn-danger    { background: rgba(229,62,62,0.1); color: var(--red); border: 1px solid rgba(229,62,62,0.3); }
+    .btn-wa        { background: rgba(37,211,102,0.12); color: #16a34a; border: 1px solid rgba(37,211,102,0.3); text-decoration: none; }
+    .btn-sm  { padding: 5px 10px; font-size: 11px; border-radius: 6px; }
+    .btn-icon { width: 32px; height: 32px; padding: 0; border-radius: 7px; justify-content: center; }
+
+    /* SEARCH + FILTERS */
+    .search-input { width: 100%; padding: 9px 13px; border-radius: 8px; border: 1.5px solid var(--lgray); background: var(--bg); font-size: 13px; outline: none; font-family: inherit; margin-bottom: 12px; }
     .search-input:focus { border-color: var(--blue); }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+    .chip { padding: 5px 12px; border-radius: 20px; border: 1.5px solid var(--lgray); background: transparent; font-size: 12px; font-weight: 500; color: var(--gray); cursor: pointer; transition: all 0.15s; }
+    .chip.active { background: var(--blue); border-color: var(--blue); color: var(--white); }
+    .chip.amber  { border-color: rgba(245,158,11,0.4); color: var(--amber); }
+    .chip.amber.active { background: var(--amber); border-color: var(--amber); color: var(--white); }
+
+    /* CODE ITEMS */
+    .code-item { background: var(--bg); border: 1px solid var(--lgray); border-radius: 9px; padding: 13px 15px; margin-bottom: 9px; }
+    .code-item.alerte { border-color: rgba(245,158,11,0.4); background: #FFFBF0; }
+    .code-item-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+    .code-item-left { flex: 1; min-width: 0; }
+    .code-val   { font-family: 'DM Mono', monospace; font-size: 16px; font-weight: 700; color: var(--blue); letter-spacing: 2px; }
+    .code-phone { font-size: 13px; font-weight: 600; color: var(--blue2); margin-top: 3px; display: flex; align-items: center; gap: 4px; }
+    .code-phone.empty { color: var(--gray); font-weight: 400; }
+    .code-meta  { font-size: 11px; color: var(--gray); margin-top: 2px; }
+    .code-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
+
+    /* BADGES */
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+    .badge-used   { background: rgba(14,158,110,0.12); color: var(--green); }
+    .badge-unused { background: rgba(245,158,11,0.12); color: var(--amber); }
 
     /* TABLE */
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     thead tr { background: var(--bg); }
-    th { padding: 11px 16px; text-align: left; font-size: 11px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
-    td { padding: 12px 16px; border-top: 1px solid var(--lgray); vertical-align: middle; }
+    th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: 0.5px; white-space: nowrap; }
+    td { padding: 11px 14px; border-top: 1px solid var(--lgray); vertical-align: middle; }
     tr:hover td { background: #FAFBFD; }
     .td-name { font-weight: 600; color: var(--dark); }
     .td-sub  { font-size: 11px; color: var(--gray); margin-top: 2px; }
-
-    /* Plan badges */
     .plan-select { padding: 4px 8px; border-radius: 6px; border: 1.5px solid var(--lgray); font-size: 12px; font-family: inherit; outline: none; cursor: pointer; background: var(--white); }
-    .plan-select:focus { border-color: var(--blue); }
-
-    /* Statut badges */
-    .statut-badge { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-    .statut-envoye    { background: rgba(56,161,105,0.12); color: var(--green); }
-    .statut-brouillon { background: var(--lgray); color: var(--gray); }
-
-    /* ACTIONS */
-    .btn-sm { padding: 5px 10px; border-radius: 6px; border: none; font-size: 11px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
-    .btn-sm:hover { opacity: 0.8; }
-    .btn-blue  { background: var(--blue); color: var(--white); }
-    .btn-gold  { background: var(--gold); color: var(--white); }
-    .btn-red   { background: #FED7D7; color: var(--red); }
-    .btn-green { background: #C6F6D5; color: var(--green); }
 
     /* PAGINATION */
     .pagination { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--lgray); }
-    .page-btn { padding: 5px 11px; border-radius: 6px; border: 1px solid var(--lgray); background: var(--white); font-size: 12px; cursor: pointer; transition: all 0.15s; }
-    .page-btn:hover   { border-color: var(--blue); color: var(--blue); }
+    .page-btn { padding: 5px 10px; border-radius: 6px; border: 1px solid var(--lgray); background: var(--white); font-size: 12px; cursor: pointer; }
     .page-btn.active  { background: var(--blue); color: var(--white); border-color: var(--blue); }
     .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .page-info { color: var(--gray); font-size: 12px; margin-left: auto; }
 
     /* LOGS */
-    .logs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px,1fr)); gap: 16px; margin-bottom: 20px; }
+    .logs-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap: 16px; margin-bottom: 20px; }
     .log-card { background: var(--white); border-radius: var(--r); padding: 20px; border: 1px solid var(--lgray); }
     .log-card-title { font-size: 12px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
-    .log-card-value { font-size: 22px; font-weight: 800; color: var(--blue); }
+    .log-card-value { font-size: 22px; font-weight: 800; color: var(--blue); font-family: 'DM Mono', monospace; }
     .log-card-sub   { font-size: 12px; color: var(--gray); margin-top: 4px; }
-    .alert-row { padding: 12px 16px; border-radius: 8px; background: #FFF5E6; border: 1px solid #F6C26D; display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .alert-row { padding: 11px 14px; border-radius: 8px; background: #FFF5E6; border: 1px solid #F6C26D; display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .alert-row.ok { background: #F0FFF4; border-color: #9AE6B4; }
-    .alert-icon { font-size: 18px; flex-shrink: 0; }
+    .alert-icon { font-size: 16px; flex-shrink: 0; }
     .alert-text { font-size: 13px; color: var(--dark); }
-    .alert-count { font-weight: 700; }
+
+    /* SYNC */
+    .sync-status { font-size: 12px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+    .sync-status.syncing { color: var(--amber); }
+    .sync-status.synced  { color: var(--green); }
+    .sync-status.error   { color: var(--red); }
+
+    /* TOAST */
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--blue); color: var(--white); padding: 11px 20px; border-radius: 40px; font-size: 13px; font-weight: 500; z-index: 9999; transition: transform 0.3s; white-space: nowrap; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
+    .toast.show    { transform: translateX(-50%) translateY(0); }
+    .toast.success { background: var(--green); }
+    .toast.error   { background: var(--red); }
 
     /* EMPTY / LOADING */
-    .empty { padding: 48px; text-align: center; color: var(--gray); }
-    .empty-icon { font-size: 40px; margin-bottom: 12px; }
-    .empty p { font-size: 14px; }
-    .loading { padding: 32px; text-align: center; color: var(--gray); font-size: 14px; }
+    .empty { padding: 40px; text-align: center; color: var(--gray); font-size: 13px; }
+    .loading { padding: 28px; text-align: center; color: var(--gray); font-size: 13px; }
 
-    /* Responsive */
     @media (max-width: 768px) {
       .sidebar { width: 60px; }
-      .sidebar-logo-text, .sidebar-logo-sub, .nav-item span:not(.nav-item-icon), .logout-btn { display: none; }
+      .sidebar-logo-name, .sidebar-logo-sub, .nav-item span { display: none; }
       .nav-item { justify-content: center; padding: 12px; }
       .main { margin-left: 60px; padding: 16px; }
       :root { --sidebar: 60px; }
     }
+
+    .fadeIn { animation: fadeIn 0.2s ease-out; }
+    @keyframes fadeIn { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
   </style>
 </head>
 <body>
@@ -170,58 +203,85 @@
     <div class="sidebar-logo">
       <div class="sidebar-logo-icon">D</div>
       <div>
-        <div class="sidebar-logo-text">DevisPro CI</div>
+        <div class="sidebar-logo-name">DevisPro CI</div>
         <div class="sidebar-logo-sub">Admin Panel</div>
       </div>
     </div>
     <nav class="sidebar-nav">
-      <button class="nav-item active" onclick="showSection('dashboard')">
-        <span class="nav-item-icon">📊</span><span>Dashboard</span>
-      </button>
-      <button class="nav-item" onclick="showSection('artisans')">
-        <span class="nav-item-icon">👷</span><span>Artisans</span>
-      </button>
-      <button class="nav-item" onclick="showSection('devis')">
-        <span class="nav-item-icon">📋</span><span>Devis</span>
-      </button>
-      <button class="nav-item" onclick="showSection('logs')">
-        <span class="nav-item-icon">🔧</span><span>Système</span>
-      </button>
+      <button class="nav-item active" onclick="showSection('dashboard',this)"><i class="ti ti-layout-dashboard"></i><span>Dashboard</span></button>
+      <button class="nav-item" onclick="showSection('codes',this)"><i class="ti ti-key"></i><span>Codes d'activation</span></button>
+      <button class="nav-item" onclick="showSection('artisans',this)"><i class="ti ti-users"></i><span>Artisans</span></button>
+      <button class="nav-item" onclick="showSection('devis',this)"><i class="ti ti-file-text"></i><span>Devis</span></button>
+      <button class="nav-item" onclick="showSection('logs',this)"><i class="ti ti-tool"></i><span>Système</span></button>
     </nav>
     <div class="sidebar-footer">
-      <button class="logout-btn" onclick="adminLogout()">🚪 Déconnexion</button>
+      <div class="badge-live"><div class="dot"></div><span id="clock">00:00</span></div>
+      <button class="logout-btn" onclick="adminLogout()"><i class="ti ti-logout"></i> Déconnexion</button>
     </div>
   </div>
 
   <div class="main">
 
-    <!-- Dashboard -->
+    <!-- DASHBOARD -->
     <div id="section-dashboard" class="section active">
       <div class="topbar">
-        <div>
-          <div class="topbar-title">Dashboard</div>
-          <div class="topbar-sub" id="last-update">Chargement...</div>
-        </div>
-        <span class="badge">🟢 En ligne</span>
+        <div><div class="topbar-title">Dashboard</div><div class="topbar-sub" id="last-update">Chargement...</div></div>
       </div>
       <div class="stats-grid" id="stats-grid"><div class="loading">Chargement...</div></div>
       <div class="card">
-        <div class="card-header"><div class="card-title">📈 Répartition des plans</div></div>
-        <div class="card-body" id="plans-chart" style="padding:20px;"></div>
+        <div class="card-header"><div class="card-title"><i class="ti ti-chart-bar"></i> Répartition des plans</div></div>
+        <div class="card-body" id="plans-chart"></div>
       </div>
     </div>
 
-    <!-- Artisans -->
+    <!-- CODES D'ACTIVATION -->
+    <div id="section-codes" class="section">
+      <div class="topbar">
+        <div><div class="topbar-title">Codes d'activation</div><div class="topbar-sub" id="codes-count">—</div></div>
+        <button class="btn btn-secondary btn-sm" onclick="loadCodes()"><i class="ti ti-refresh"></i> Rafraîchir</button>
+      </div>
+
+      <!-- Génération -->
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header"><div class="card-title"><i class="ti ti-plus"></i> Générer un code</div></div>
+        <div class="card-body">
+          <label class="form-label">Numéro WhatsApp de l'artisan (optionnel)</label>
+          <div class="form-row">
+            <input class="form-input mono" type="tel" id="gen-phone" placeholder="+225 07 XX XX XX XX" style="margin-bottom:0;">
+            <input class="form-input w80" type="number" id="gen-count" value="1" min="1" max="20" style="margin-bottom:0;">
+            <button class="btn btn-primary" onclick="generateCodes()"><i class="ti ti-plus"></i> Générer</button>
+            <button class="btn btn-secondary" onclick="copyAllUnused()"><i class="ti ti-copy"></i> Copier libres</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Liste codes -->
+      <div class="card">
+        <div class="card-header"><div class="card-title"><i class="ti ti-list"></i> Liste des codes</div></div>
+        <div class="card-body">
+          <div class="sync-status" id="sync-status"><i class="ti ti-cloud"></i> Chargement...</div>
+          <input class="search-input" type="search" id="codes-search" placeholder="🔍 Rechercher par code ou numéro..." oninput="renderCodes()">
+          <div class="filters">
+            <div class="chip active" onclick="setCodesFilter(this,'all')">Tous</div>
+            <div class="chip" onclick="setCodesFilter(this,'unused')">Libres</div>
+            <div class="chip" onclick="setCodesFilter(this,'used')">Utilisés</div>
+          </div>
+          <div id="codes-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARTISANS -->
     <div id="section-artisans" class="section">
       <div class="topbar">
         <div><div class="topbar-title">Artisans</div><div class="topbar-sub" id="artisans-count">—</div></div>
       </div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Liste des artisans</div>
-          <input class="search-input" id="artisans-search" placeholder="🔍 Nom, téléphone, métier..." oninput="debounce(() => loadArtisans(1), 400)()">
+          <div class="card-title"><i class="ti ti-users"></i> Liste des artisans</div>
+          <input class="search-input" id="artisans-search" placeholder="🔍 Nom, téléphone, métier..." oninput="debounce(()=>loadArtisans(1),400)()" style="margin-bottom:0;min-width:200px;">
         </div>
-        <div class="card-body">
+        <div class="card-body" style="padding:0;">
           <div class="table-wrap">
             <table>
               <thead><tr>
@@ -236,23 +296,20 @@
       </div>
     </div>
 
-    <!-- Devis -->
+    <!-- DEVIS -->
     <div id="section-devis" class="section">
       <div class="topbar">
         <div><div class="topbar-title">Devis</div><div class="topbar-sub" id="devis-count">—</div></div>
       </div>
       <div class="card">
         <div class="card-header">
-          <div class="card-title">Tous les devis</div>
-          <input class="search-input" id="devis-search" placeholder="🔍 Client, numéro, artisan..." oninput="debounce(() => loadDevis(1), 400)()">
+          <div class="card-title"><i class="ti ti-file-text"></i> Tous les devis</div>
+          <input class="search-input" id="devis-search" placeholder="🔍 Client, numéro, artisan..." oninput="debounce(()=>loadDevis(1),400)()" style="margin-bottom:0;min-width:200px;">
         </div>
-        <div class="card-body">
+        <div class="card-body" style="padding:0;">
           <div class="table-wrap">
             <table>
-              <thead><tr>
-                <th>Numéro</th><th>Client</th><th>Artisan</th>
-                <th>Montant</th><th>Statut</th><th>Date</th>
-              </tr></thead>
+              <thead><tr><th>Numéro</th><th>Client</th><th>Artisan</th><th>Montant</th><th>Statut</th><th>Date</th></tr></thead>
               <tbody id="devis-tbody"><tr><td colspan="6" class="loading">Chargement...</td></tr></tbody>
             </table>
           </div>
@@ -261,294 +318,339 @@
       </div>
     </div>
 
-    <!-- Logs -->
+    <!-- LOGS -->
     <div id="section-logs" class="section">
       <div class="topbar">
-        <div><div class="topbar-title">Système</div><div class="topbar-sub">État du backend et alertes</div></div>
-        <button class="btn-sm btn-blue" onclick="loadLogs()">🔄 Rafraîchir</button>
+        <div><div class="topbar-title">Système</div><div class="topbar-sub">État du backend</div></div>
+        <button class="btn btn-primary btn-sm" onclick="loadLogs()"><i class="ti ti-refresh"></i> Rafraîchir</button>
       </div>
       <div class="logs-grid" id="logs-grid"><div class="loading">Chargement...</div></div>
       <div class="card">
-        <div class="card-header"><div class="card-title">⚠️ Alertes actives</div></div>
-        <div class="card-body" style="padding:16px;" id="alerts-list"><div class="loading">Chargement...</div></div>
+        <div class="card-header"><div class="card-title"><i class="ti ti-alert-triangle"></i> Alertes actives</div></div>
+        <div class="card-body" id="alerts-list"><div class="loading">Chargement...</div></div>
       </div>
     </div>
 
   </div>
 </div>
 
+<div class="toast" id="toast"></div>
+
 <script>
 const API = window.DEVISPRO_API_BASE || 'https://blud911-devispro-backend.onrender.com';
 let adminToken   = localStorage.getItem('dp_admin_token');
 let artisansPage = 1;
 let devisPage    = 1;
+let allCodes     = [];
+let codesFilter  = 'all';
 
-// ── Auth ───────────────────────────────────────────────────────
+// ── AUTH ──
 async function adminLogin() {
   const pass = document.getElementById('admin-pass').value;
   const err  = document.getElementById('login-error');
   err.style.display = 'none';
   try {
-    const res  = await fetch(`${API}/api/admin/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: pass })
-    });
+    const res  = await fetch(`${API}/api/admin/login`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({password:pass}) });
     const data = await res.json();
-    if (!res.ok) { err.style.display = 'block'; return; }
+    if (!res.ok) { err.style.display='block'; return; }
     adminToken = data.token;
     localStorage.setItem('dp_admin_token', adminToken);
     showAdmin();
-  } catch {
-    err.textContent = 'Erreur de connexion au serveur';
-    err.style.display = 'block';
-  }
+  } catch { err.textContent='Erreur serveur'; err.style.display='block'; }
 }
-
 function adminLogout() {
-  localStorage.removeItem('dp_admin_token');
-  adminToken = null;
-  document.getElementById('admin-app').style.display  = 'none';
-  document.getElementById('login-screen').style.display = 'flex';
+  localStorage.removeItem('dp_admin_token'); adminToken=null;
+  document.getElementById('admin-app').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
 }
-
 function showAdmin() {
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('admin-app').style.display    = 'block';
-  loadDashboard();
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('admin-app').style.display='block';
+  loadDashboard(); loadCodes();
 }
-
 if (adminToken) showAdmin();
 
-// ── API helpers ────────────────────────────────────────────────
+// ── API HELPERS ──
 async function apiGet(path) {
-  const res = await fetch(`${API}${path}`, { headers: { 'Authorization': `Bearer ${adminToken}` } });
-  if (res.status === 401) { adminLogout(); throw new Error('Session expirée'); }
+  const res = await fetch(`${API}${path}`,{headers:{'Authorization':`Bearer ${adminToken}`}});
+  if (res.status===401){adminLogout();throw new Error('Session expirée');}
   return res.json();
 }
-async function apiPut(path, body) {
-  const res = await fetch(`${API}${path}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${adminToken}` },
-    body: JSON.stringify(body)
-  });
+async function apiPost(path,body) {
+  const res = await fetch(`${API}${path}`,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${adminToken}`},body:JSON.stringify(body)});
+  return res.json();
+}
+async function apiPut(path,body) {
+  const res = await fetch(`${API}${path}`,{method:'PUT',headers:{'Content-Type':'application/json','Authorization':`Bearer ${adminToken}`},body:JSON.stringify(body)});
   return res.json();
 }
 async function apiDelete(path) {
-  const res = await fetch(`${API}${path}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${adminToken}` } });
+  const res = await fetch(`${API}${path}`,{method:'DELETE',headers:{'Authorization':`Bearer ${adminToken}`}});
   return res.json();
 }
 
-// ── Navigation ─────────────────────────────────────────────────
-function showSection(name) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+// ── NAVIGATION ──
+function showSection(name, el) {
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById(`section-${name}`).classList.add('active');
-  event.currentTarget.classList.add('active');
-  if (name === 'dashboard') loadDashboard();
-  if (name === 'artisans')  loadArtisans(1);
-  if (name === 'devis')     loadDevis(1);
-  if (name === 'logs')      loadLogs();
+  if(el) el.classList.add('active');
+  if(name==='dashboard') loadDashboard();
+  if(name==='codes')     loadCodes();
+  if(name==='artisans')  loadArtisans(1);
+  if(name==='devis')     loadDevis(1);
+  if(name==='logs')      loadLogs();
 }
 
-// ── Dashboard ──────────────────────────────────────────────────
+// ── DASHBOARD ──
 async function loadDashboard() {
   try {
     const data = await apiGet('/api/admin/stats');
-    document.getElementById('last-update').textContent = `Dernière mise à jour : ${new Date().toLocaleTimeString('fr-FR')}`;
+    document.getElementById('last-update').textContent = `Mise à jour : ${new Date().toLocaleTimeString('fr-FR')}`;
     document.getElementById('stats-grid').innerHTML = `
-      <div class="stat-card"><div class="stat-icon blue">👷</div><div>
-        <div class="stat-value">${data.total_artisans}</div>
-        <div class="stat-label">Artisans inscrits</div>
-        <div class="stat-delta">+${data.artisans_7j} cette semaine</div>
-      </div></div>
-      <div class="stat-card"><div class="stat-icon gold">📋</div><div>
-        <div class="stat-value">${data.total_devis}</div>
-        <div class="stat-label">Devis générés</div>
-        <div class="stat-delta">+${data.devis_7j} cette semaine</div>
-      </div></div>
-      <div class="stat-card"><div class="stat-icon green">💰</div><div>
-        <div class="stat-value">${Number(data.chiffre_affaires).toLocaleString('fr-FR')}</div>
-        <div class="stat-label">FCFA facturés (total)</div>
-      </div></div>
-      <div class="stat-card"><div class="stat-icon purple">📊</div><div>
-        <div class="stat-value">${data.total_artisans > 0 ? Math.round(data.total_devis/data.total_artisans*10)/10 : 0}</div>
-        <div class="stat-label">Devis / artisan (moy.)</div>
-      </div></div>`;
-    const colors = { gratuit: '#8A97A8', starter: '#1A3A5C', pro: '#C9952B' };
-    document.getElementById('plans-chart').innerHTML = data.plans.map(p => `
+      <div class="stat-card"><div class="stat-icon blue"><i class="ti ti-users"></i></div><div>
+        <div class="stat-value">${data.total_artisans}</div><div class="stat-label">Artisans</div>
+        <div class="stat-delta">+${data.artisans_7j} cette semaine</div></div></div>
+      <div class="stat-card"><div class="stat-icon gold"><i class="ti ti-file-text"></i></div><div>
+        <div class="stat-value">${data.total_devis}</div><div class="stat-label">Devis</div>
+        <div class="stat-delta">+${data.devis_7j} cette semaine</div></div></div>
+      <div class="stat-card"><div class="stat-icon green"><i class="ti ti-coin"></i></div><div>
+        <div class="stat-value green">${Number(data.chiffre_affaires).toLocaleString('fr-FR')}</div>
+        <div class="stat-label">FCFA facturés</div></div></div>
+      <div class="stat-card"><div class="stat-icon blue"><i class="ti ti-chart-bar"></i></div><div>
+        <div class="stat-value">${data.total_artisans>0?Math.round(data.total_devis/data.total_artisans*10)/10:0}</div>
+        <div class="stat-label">Devis/artisan</div></div></div>`;
+    const colors={gratuit:'#8A97A8',starter:'#1A3A5C',pro:'#C9952B'};
+    document.getElementById('plans-chart').innerHTML = data.plans.map(p=>`
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-        <div style="width:120px;font-size:13px;font-weight:600;color:var(--dark);text-transform:capitalize;">${p.plan}</div>
+        <div style="width:100px;font-size:13px;font-weight:600;color:var(--dark);text-transform:capitalize;">${p.plan}</div>
         <div style="flex:1;background:var(--lgray);border-radius:6px;height:10px;overflow:hidden;">
           <div style="width:${Math.round(p.count/data.total_artisans*100)}%;background:${colors[p.plan]||'#1A3A5C'};height:100%;border-radius:6px;"></div>
         </div>
-        <div style="font-size:13px;font-weight:700;color:var(--blue);width:40px;text-align:right;">${p.count}</div>
-      </div>`).join('') || '<div class="empty"><div class="empty-icon">📊</div><p>Aucune donnée</p></div>';
-  } catch (err) {
-    document.getElementById('stats-grid').innerHTML = `<div class="loading">Erreur : ${err.message}</div>`;
-  }
+        <div style="font-size:13px;font-weight:700;color:var(--blue);width:30px;text-align:right;">${p.count}</div>
+      </div>`).join('') || '<div class="empty">Aucune donnée</div>';
+  } catch(err) { document.getElementById('stats-grid').innerHTML=`<div class="loading">Erreur : ${err.message}</div>`; }
 }
 
-// ── Artisans v2 — avec colonne Statut + boutons validation ─────
-async function loadArtisans(page = 1) {
-  artisansPage = page;
-  const search = document.getElementById('artisans-search').value;
+// ── CODES D'ACTIVATION ──
+async function loadCodes() {
+  setSyncStatus('syncing','Chargement...');
   try {
-    const data = await apiGet(`/api/admin/artisans?page=${page}&search=${encodeURIComponent(search)}`);
-    document.getElementById('artisans-count').textContent = `${data.total} artisan${data.total > 1 ? 's' : ''} inscrits`;
+    allCodes = await apiGet('/api/admin/codes');
+    setSyncStatus('synced',`${allCodes.length} code${allCodes.length>1?'s':''}`);
+    document.getElementById('codes-count').textContent = `${allCodes.length} code${allCodes.length>1?'s':''} au total`;
+    renderCodes();
+  } catch(e) { setSyncStatus('error','Erreur chargement'); }
+}
 
-    const tbody = document.getElementById('artisans-tbody');
-    if (!data.artisans.length) {
-      tbody.innerHTML = `<tr><td colspan="8"><div class="empty"><div class="empty-icon">👷</div><p>Aucun artisan trouvé</p></div></td></tr>`;
-      return;
+function setSyncStatus(state,text) {
+  const el=document.getElementById('sync-status');
+  el.className=`sync-status ${state}`;
+  const icons={syncing:'refresh',synced:'cloud-check',error:'cloud-off'};
+  el.innerHTML=`<i class="ti ti-${icons[state]}"></i> ${text}`;
+}
+
+function setCodesFilter(el,filter) {
+  codesFilter=filter;
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  renderCodes();
+}
+
+function renderCodes() {
+  const q=(document.getElementById('codes-search').value||'').toLowerCase();
+  const filtered = allCodes.filter(c=>{
+    if(codesFilter==='unused' && c.used) return false;
+    if(codesFilter==='used'   && !c.used) return false;
+    if(q) return (c.code||'').toLowerCase().includes(q)||(c.artisan_tel||'').toLowerCase().includes(q)||(c.artisan_nom||'').toLowerCase().includes(q);
+    return true;
+  });
+
+  const container = document.getElementById('codes-list');
+  if(!filtered.length){container.innerHTML='<div class="empty">Aucun résultat</div>';return;}
+
+  container.innerHTML = filtered.map(c=>{
+    const phoneHtml = c.artisan_tel
+      ? `<div class="code-phone"><i class="ti ti-device-mobile" style="font-size:12px;"></i>${c.artisan_tel}${c.artisan_nom?' — '+c.artisan_nom:''}</div>`
+      : `<div class="code-phone empty"><i class="ti ti-device-mobile" style="font-size:12px;"></i>Non assigné</div>`;
+
+    const waLink = c.artisan_tel ? buildWALink(c.artisan_tel, c.code) : null;
+    const btnWA  = waLink ? `<a class="btn btn-wa btn-sm" href="${waLink}" target="_blank"><i class="ti ti-brand-whatsapp"></i> Envoyer</a>` : '';
+
+    return `
+      <div class="code-item fadeIn">
+        <div class="code-item-top">
+          <div class="code-item-left">
+            <div class="code-val">${c.code}</div>
+            ${phoneHtml}
+            <div class="code-meta">Créé le ${formatDate(c.created_at)}${c.used_at?' · Utilisé le '+formatDate(c.used_at):''}</div>
+          </div>
+          <div class="code-actions">
+            <span class="badge ${c.used?'badge-used':'badge-unused'}">${c.used?'✓ Utilisé':'⏳ Libre'}</span>
+            ${!c.used?`<button class="btn btn-secondary btn-sm btn-icon" onclick="copier('${c.code}')" title="Copier"><i class="ti ti-copy"></i></button>`:''}
+            ${btnWA}
+            <button class="btn btn-danger btn-sm btn-icon" onclick="deleteCode('${c.id}','${c.code}')" title="Supprimer"><i class="ti ti-trash"></i></button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+async function generateCodes() {
+  const phone = document.getElementById('gen-phone').value.trim();
+  const count = parseInt(document.getElementById('gen-count').value)||1;
+  try {
+    const data = await apiPost('/api/admin/codes/generate', { count, artisan_id: null });
+    document.getElementById('gen-phone').value='';
+    await loadCodes();
+    showToast(`✓ ${data.count} code${data.count>1?'s':''} généré${data.count>1?'s':''}`, 'success');
+
+    // Si numéro fourni → ouvrir WhatsApp directement
+    if(phone && data.generated.length===1) {
+      setTimeout(()=>{
+        const link = buildWALink(phone, data.generated[0].code);
+        if(link) window.open(link,'_blank');
+      }, 500);
     }
+  } catch { showToast('Erreur génération','error'); }
+}
 
-    tbody.innerHTML = data.artisans.map(a => {
-      // Badge statut
-      const statutStyle = {
-        'actif':      'background:#C6F6D5;color:#276749;',
-        'en_attente': 'background:#FEFCBF;color:#744210;',
-        'suspendu':   'background:#FED7D7;color:#9B2C2C;'
-      }[a.statut] || '';
-      const statutLabel = {
-        'actif':      '✅ Actif',
-        'en_attente': '⏳ En attente',
-        'suspendu':   '🚫 Suspendu'
-      }[a.statut] || a.statut;
+function buildWALink(phone, code) {
+  if(!phone) return null;
+  let num = phone.replace(/[\s\-\.\(\)]/g,'');
+  if(num.startsWith('+225'))     num=num.slice(1);
+  else if(num.startsWith('00225')) num=num.slice(2);
+  else if(!num.startsWith('225')) num='225'+num;
+  const msg = encodeURIComponent(
+    `Bonjour !\n\nVotre compte DevisPro CI a été créé.\n\nCode d'activation : *${code}*\n\nOuvrez l'app et entrez ce code pour activer votre compte.\n\n— NexeraSecurité`
+  );
+  return `https://wa.me/${num}?text=${msg}`;
+}
 
-      // Bouton de validation selon statut
-      let btnValidation = '';
-      if (a.statut === 'en_attente') {
-        btnValidation = `<button class="btn-sm btn-green" onclick="updateStatut('${a.id}','actif')">✅ Valider</button>`;
-      } else if (a.statut === 'actif') {
-        btnValidation = `<button class="btn-sm btn-red" onclick="updateStatut('${a.id}','suspendu')">🚫 Suspendre</button>`;
-      } else if (a.statut === 'suspendu') {
-        btnValidation = `<button class="btn-sm btn-green" onclick="updateStatut('${a.id}','actif')">↩ Réactiver</button>`;
-      }
+function copier(texte) {
+  navigator.clipboard.writeText(texte).then(()=>showToast(`Code ${texte} copié !`,'success'));
+}
 
-      return `
-        <tr>
-          <td>
-            <div class="td-name">${a.nom} ${a.prenom || ''}</div>
-            <div class="td-sub">${a.id.slice(0,8)}...</div>
-          </td>
-          <td>${a.telephone}</td>
-          <td>${a.metier}</td>
-          <td>
-            <select class="plan-select" onchange="updatePlan('${a.id}', this.value)">
-              <option value="gratuit" ${a.plan==='gratuit'?'selected':''}>Gratuit</option>
-              <option value="starter" ${a.plan==='starter'?'selected':''}>Starter</option>
-              <option value="pro"     ${a.plan==='pro'    ?'selected':''}>Pro</option>
-            </select>
-          </td>
-          <td><strong>${a.devis_count}</strong></td>
-          <td><span style="display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700;${statutStyle}">${statutLabel}</span></td>
-          <td>${new Date(a.created_at).toLocaleDateString('fr-FR')}</td>
-          <td style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-            ${btnValidation}
-            <button class="btn-sm btn-red" onclick="deleteArtisan('${a.id}','${a.nom}')">🗑</button>
-          </td>
-        </tr>`;
+function copyAllUnused() {
+  const unused=allCodes.filter(c=>!c.used).map(c=>c.code);
+  if(!unused.length){showToast('Aucun code libre','error');return;}
+  navigator.clipboard.writeText(unused.join('\n')).then(()=>showToast(`${unused.length} codes copiés`,'success'));
+}
+
+async function deleteCode(id,code) {
+  if(!confirm(`Supprimer le code ${code} ?`)) return;
+  try { await apiDelete(`/api/admin/codes/${id}`); await loadCodes(); showToast(`Code ${code} supprimé`,'success'); }
+  catch { showToast('Erreur suppression','error'); }
+}
+
+// ── ARTISANS ──
+async function loadArtisans(page=1) {
+  artisansPage=page;
+  const search=document.getElementById('artisans-search').value;
+  try {
+    const data=await apiGet(`/api/admin/artisans?page=${page}&search=${encodeURIComponent(search)}`);
+    document.getElementById('artisans-count').textContent=`${data.total} artisan${data.total>1?'s':''} inscrits`;
+    const tbody=document.getElementById('artisans-tbody');
+    if(!data.artisans.length){tbody.innerHTML=`<tr><td colspan="8"><div class="empty">Aucun artisan trouvé</div></td></tr>`;return;}
+    tbody.innerHTML=data.artisans.map(a=>{
+      const statutStyle={actif:'background:#C6F6D5;color:#276749;',en_attente:'background:#FEFCBF;color:#744210;',suspendu:'background:#FED7D7;color:#9B2C2C;'}[a.statut]||'';
+      const statutLabel={actif:'✅ Actif',en_attente:'⏳ En attente',suspendu:'🚫 Suspendu'}[a.statut]||a.statut;
+      let btnVal='';
+      if(a.statut==='en_attente') btnVal=`<button class="btn btn-green btn-sm" onclick="updateStatut('${a.id}','actif')">✅ Valider</button>`;
+      else if(a.statut==='actif') btnVal=`<button class="btn btn-danger btn-sm" onclick="updateStatut('${a.id}','suspendu')">🚫</button>`;
+      else if(a.statut==='suspendu') btnVal=`<button class="btn btn-green btn-sm" onclick="updateStatut('${a.id}','actif')">↩</button>`;
+      return `<tr>
+        <td><div class="td-name">${a.nom} ${a.prenom||''}</div><div class="td-sub">${a.id.slice(0,8)}...</div></td>
+        <td>${a.telephone}</td><td>${a.metier}</td>
+        <td><select class="plan-select" onchange="updatePlan('${a.id}',this.value)">
+          <option value="gratuit" ${a.plan==='gratuit'?'selected':''}>Gratuit</option>
+          <option value="starter" ${a.plan==='starter'?'selected':''}>Starter</option>
+          <option value="pro"     ${a.plan==='pro'    ?'selected':''}>Pro</option>
+        </select></td>
+        <td><strong>${a.devis_count}</strong></td>
+        <td><span style="display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700;${statutStyle}">${statutLabel}</span></td>
+        <td>${formatDate(a.created_at)}</td>
+        <td style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
+          ${btnVal}
+          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteArtisan('${a.id}','${a.nom}')"><i class="ti ti-trash"></i></button>
+        </td>
+      </tr>`;
     }).join('');
-
-    renderPagination('artisans-pagination', data.total, data.limit, page, loadArtisans);
-  } catch (err) {
-    document.getElementById('artisans-tbody').innerHTML = `<tr><td colspan="8" class="loading">Erreur : ${err.message}</td></tr>`;
-  }
+    renderPagination('artisans-pagination',data.total,data.limit,page,loadArtisans);
+  } catch(err){document.getElementById('artisans-tbody').innerHTML=`<tr><td colspan="8" class="loading">Erreur : ${err.message}</td></tr>`;}
 }
 
-async function updatePlan(id, plan) {
-  try { await apiPut(`/api/admin/artisans/${id}/plan`, { plan }); }
-  catch { alert('Erreur lors de la mise à jour du plan'); }
+async function updatePlan(id,plan) { try{await apiPut(`/api/admin/artisans/${id}/plan`,{plan});}catch{alert('Erreur');} }
+async function updateStatut(id,statut) { try{await apiPut(`/api/admin/artisans/${id}/statut`,{statut});loadArtisans(artisansPage);}catch{alert('Erreur');} }
+async function deleteArtisan(id,nom) {
+  if(!confirm(`Supprimer "${nom}" ?`)) return;
+  try{await apiDelete(`/api/admin/artisans/${id}`);loadArtisans(artisansPage);}catch{alert('Erreur');}
 }
 
-// Nouvelle fonction v2
-async function updateStatut(id, statut) {
+// ── DEVIS ──
+async function loadDevis(page=1) {
+  devisPage=page;
+  const search=document.getElementById('devis-search').value;
   try {
-    await apiPut(`/api/admin/artisans/${id}/statut`, { statut });
-    loadArtisans(artisansPage);
-  } catch { alert('Erreur lors de la mise à jour du statut'); }
+    const data=await apiGet(`/api/admin/devis?page=${page}&search=${encodeURIComponent(search)}`);
+    document.getElementById('devis-count').textContent=`${data.total} devis`;
+    const tbody=document.getElementById('devis-tbody');
+    if(!data.devis.length){tbody.innerHTML=`<tr><td colspan="6"><div class="empty">Aucun devis</div></td></tr>`;return;}
+    tbody.innerHTML=data.devis.map(d=>`<tr>
+      <td><strong>${d.numero||'—'}</strong></td>
+      <td><div class="td-name">${d.client_nom}</div><div class="td-sub">${d.objet||''}</div></td>
+      <td><div>${d.artisan_nom}</div><div class="td-sub">${d.artisan_tel}</div></td>
+      <td><strong>${Number(d.total).toLocaleString('fr-FR')} FCFA</strong></td>
+      <td><span style="background:rgba(56,161,105,0.12);color:#276749;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;">${d.statut}</span></td>
+      <td>${formatDate(d.created_at)}</td>
+    </tr>`).join('');
+    renderPagination('devis-pagination',data.total,data.limit,page,loadDevis);
+  } catch(err){document.getElementById('devis-tbody').innerHTML=`<tr><td colspan="6" class="loading">Erreur</td></tr>`;}
 }
 
-async function deleteArtisan(id, nom) {
-  if (!confirm(`Supprimer l'artisan "${nom}" et tous ses devis ? Cette action est irréversible.`)) return;
-  try { await apiDelete(`/api/admin/artisans/${id}`); loadArtisans(artisansPage); }
-  catch { alert('Erreur lors de la suppression'); }
-}
-
-// ── Devis ──────────────────────────────────────────────────────
-async function loadDevis(page = 1) {
-  devisPage = page;
-  const search = document.getElementById('devis-search').value;
-  try {
-    const data = await apiGet(`/api/admin/devis?page=${page}&search=${encodeURIComponent(search)}`);
-    document.getElementById('devis-count').textContent = `${data.total} devis au total`;
-    const tbody = document.getElementById('devis-tbody');
-    if (!data.devis.length) {
-      tbody.innerHTML = `<tr><td colspan="6"><div class="empty"><div class="empty-icon">📋</div><p>Aucun devis trouvé</p></div></td></tr>`;
-      return;
-    }
-    tbody.innerHTML = data.devis.map(d => `
-      <tr>
-        <td><strong>${d.numero || '—'}</strong></td>
-        <td><div class="td-name">${d.client_nom}</div><div class="td-sub">${d.objet || ''}</div></td>
-        <td><div>${d.artisan_nom}</div><div class="td-sub">${d.artisan_tel}</div></td>
-        <td><strong>${Number(d.total).toLocaleString('fr-FR')} FCFA</strong></td>
-        <td><span class="statut-badge statut-${d.statut}">${d.statut}</span></td>
-        <td>${new Date(d.created_at).toLocaleDateString('fr-FR')}</td>
-      </tr>`).join('');
-    renderPagination('devis-pagination', data.total, data.limit, page, loadDevis);
-  } catch (err) {
-    document.getElementById('devis-tbody').innerHTML = `<tr><td colspan="6" class="loading">Erreur : ${err.message}</td></tr>`;
-  }
-}
-
-// ── Logs ───────────────────────────────────────────────────────
+// ── LOGS ──
 async function loadLogs() {
   try {
-    const data = await apiGet('/api/admin/logs');
-    const uptime = Math.floor(data.uptime);
-    const h = Math.floor(uptime/3600), m = Math.floor((uptime%3600)/60);
-    const mem = Math.round(data.memory.heapUsed/1024/1024);
-    document.getElementById('logs-grid').innerHTML = `
-      <div class="log-card"><div class="log-card-title">🟢 Statut DB</div><div class="log-card-value">${data.db_connected?'Connectée':'❌ Déconnectée'}</div><div class="log-card-sub">Neon PostgreSQL Frankfurt</div></div>
-      <div class="log-card"><div class="log-card-title">⏱ Uptime</div><div class="log-card-value">${h}h ${m}m</div><div class="log-card-sub">Depuis le dernier démarrage</div></div>
+    const data=await apiGet('/api/admin/logs');
+    const uptime=Math.floor(data.uptime), h=Math.floor(uptime/3600), m=Math.floor((uptime%3600)/60);
+    const mem=Math.round(data.memory.heapUsed/1024/1024);
+    document.getElementById('logs-grid').innerHTML=`
+      <div class="log-card"><div class="log-card-title">🟢 Base de données</div><div class="log-card-value">${data.db_connected?'Connectée':'❌'}</div><div class="log-card-sub">Neon Frankfurt</div></div>
+      <div class="log-card"><div class="log-card-title">⏱ Uptime</div><div class="log-card-value">${h}h ${m}m</div><div class="log-card-sub">Depuis dernier démarrage</div></div>
       <div class="log-card"><div class="log-card-title">🧠 Mémoire</div><div class="log-card-value">${mem} MB</div><div class="log-card-sub">Heap utilisé</div></div>`;
-    const alerts = document.getElementById('alerts-list');
-    if (!data.alerts || !data.alerts.length) {
-      alerts.innerHTML = `<div class="alert-row ok"><span class="alert-icon">✅</span><span class="alert-text">Aucune alerte active</span></div>`;
-    } else {
-      alerts.innerHTML = data.alerts.map(a =>
-        parseInt(a.count) > 0
-          ? `<div class="alert-row"><span class="alert-icon">⚠️</span><span class="alert-text"><span class="alert-count">${a.count}</span> × ${a.type}</span></div>`
-          : `<div class="alert-row ok"><span class="alert-icon">✅</span><span class="alert-text">${a.type} : aucun problème</span></div>`
-      ).join('');
-    }
-  } catch (err) {
-    document.getElementById('logs-grid').innerHTML = `<div class="loading">Erreur : ${err.message}</div>`;
-  }
+    const alerts=document.getElementById('alerts-list');
+    alerts.innerHTML = !data.alerts?.length
+      ? `<div class="alert-row ok"><span class="alert-icon">✅</span><span>Aucune alerte active</span></div>`
+      : data.alerts.map(a=>parseInt(a.count)>0
+          ? `<div class="alert-row"><span class="alert-icon">⚠️</span><span><strong>${a.count}</strong> × ${a.type}</span></div>`
+          : `<div class="alert-row ok"><span class="alert-icon">✅</span><span>${a.type} : OK</span></div>`
+        ).join('');
+  } catch(err){document.getElementById('logs-grid').innerHTML=`<div class="loading">Erreur</div>`;}
 }
 
-// ── Pagination ─────────────────────────────────────────────────
-function renderPagination(containerId, total, limit, current, loadFn) {
-  const pages = Math.ceil(total/limit);
-  const el = document.getElementById(containerId);
-  if (pages <= 1) { el.innerHTML=''; return; }
-  let html = `<button class="page-btn" onclick="(${loadFn.name})(${current-1})" ${current===1?'disabled':''}>← Préc</button>`;
-  for (let i=1; i<=pages; i++) {
-    if (i===1||i===pages||Math.abs(i-current)<=1) html+=`<button class="page-btn ${i===current?'active':''}" onclick="(${loadFn.name})(${i})">${i}</button>`;
-    else if (Math.abs(i-current)===2) html+=`<span style="color:var(--gray);padding:0 4px;">…</span>`;
+// ── HELPERS ──
+function formatDate(iso) {
+  if(!iso) return '—';
+  return new Date(iso).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function renderPagination(containerId,total,limit,current,loadFn) {
+  const pages=Math.ceil(total/limit), el=document.getElementById(containerId);
+  if(pages<=1){el.innerHTML='';return;}
+  let html=`<button class="page-btn" onclick="(${loadFn.name})(${current-1})" ${current===1?'disabled':''}>← Préc</button>`;
+  for(let i=1;i<=pages;i++){
+    if(i===1||i===pages||Math.abs(i-current)<=1) html+=`<button class="page-btn ${i===current?'active':''}" onclick="(${loadFn.name})(${i})">${i}</button>`;
+    else if(Math.abs(i-current)===2) html+=`<span style="color:var(--gray);padding:0 4px;">…</span>`;
   }
-  html += `<button class="page-btn" onclick="(${loadFn.name})(${current+1})" ${current===pages?'disabled':''}>Suiv →</button>`;
-  html += `<span class="page-info">${total} résultats</span>`;
-  el.innerHTML = html;
+  html+=`<button class="page-btn" onclick="(${loadFn.name})(${current+1})" ${current===pages?'disabled':''}>Suiv →</button>`;
+  html+=`<span class="page-info">${total} résultats</span>`;
+  el.innerHTML=html;
 }
+function debounce(fn,delay){let t;return(...args)=>{clearTimeout(t);t=setTimeout(()=>fn(...args),delay);};}
+function showToast(msg,type='success'){const t=document.getElementById('toast');t.textContent=msg;t.className=`toast ${type} show`;setTimeout(()=>t.classList.remove('show'),2800);}
 
-// ── Debounce ───────────────────────────────────────────────────
-function debounce(fn, delay) {
-  let timer;
-  return (...args) => { clearTimeout(timer); timer=setTimeout(()=>fn(...args),delay); };
-}
+// ── HORLOGE ──
+function updateClock(){const n=new Date();document.getElementById('clock').textContent=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');}
+setInterval(updateClock,30000);updateClock();
 </script>
 </body>
 </html>
