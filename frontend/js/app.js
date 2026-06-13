@@ -1,4 +1,4 @@
-// ── app.js v3 — avec saisie code d'activation ─────────────────
+// ── app.js v3.1 — fix pending-screen null ─────────────────────
 
 // ── PWA ───────────────────────────────────────────────────────
 let deferredInstallPrompt = null;
@@ -50,7 +50,7 @@ async function submitAuth() {
   } catch (err) {
     const msg = err.message || '';
     if (msg.includes('attente') || msg.includes('validation')) showPendingScreen();
-    else if (msg.includes('suspendu')) alert('Compte suspendu. Contactez l\'administrateur.');
+    else if (msg.includes('suspendu') || msg.includes('expiré')) alert('Abonnement expiré ou compte suspendu. Contactez l\'administrateur.');
     else alert(msg || 'Erreur de connexion');
   } finally {
     btn.disabled = false;
@@ -60,14 +60,12 @@ async function submitAuth() {
 
 // ── ÉCRANS ─────────────────────────────────────────────────────
 function showPendingScreen() {
-  document.getElementById('auth-screen').style.display    = 'none';
+  document.getElementById('auth-screen').style.display       = 'none';
   document.getElementById('activation-screen').style.display = 'flex';
-  document.getElementById('pending-screen').style.display = 'none';
 }
 
 function backToLogin() {
   document.getElementById('activation-screen').style.display = 'none';
-  document.getElementById('pending-screen').style.display    = 'none';
   document.getElementById('auth-screen').style.display       = 'flex';
 }
 
@@ -99,8 +97,7 @@ async function submitActivationCode() {
 function showApp(artisan) {
   document.getElementById('auth-screen').style.display       = 'none';
   document.getElementById('activation-screen').style.display = 'none';
-  document.getElementById('pending-screen').style.display    = 'none';
-  document.getElementById('app').style.display = 'flex';
+  document.getElementById('app').style.display               = 'flex';
   document.getElementById('header-sub').textContent = `Bonjour, ${artisan.nom} 👋`;
   if (artisan.plan === 'gratuit') {
     const restants = Math.max(0, 3 - (artisan.devis_count || 0));
