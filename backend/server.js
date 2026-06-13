@@ -1,8 +1,7 @@
 // ══════════════════════════════════════════════════════════════
-// DevisPro CI — server.js v4.3
+// DevisPro CI — server.js v4.4
 // Node.js v24 : tous les require() en tête de fichier (règle critique)
-// v4.3 : lien partage WhatsApp public 7j, vérif statut bot,
-//        fix expires_at gratuit, fix stream PDF, normalisation JSON
+// v4.4 : fix formatage nombres FCFA (espace insécable → regex)
 // ══════════════════════════════════════════════════════════════
 require('dotenv').config();
 
@@ -22,6 +21,12 @@ const multer         = require('multer');
 const app         = express();
 const PORT        = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || 'https://blud911-devispro-backend.onrender.com';
+
+// ── Formatage FCFA ─────────────────────────────────────────────
+// ✅ v4.4 : espace simple ASCII — PDFKit rend toLocaleString mal
+function fcfa(n) {
+  return String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
 
 // ── Middleware ─────────────────────────────────────────────────
 app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
@@ -100,7 +105,7 @@ function parseJson(val) {
 
 // ══════════════════════════════════════════════════════════════
 // CRON QUOTIDIEN — expire les artisans abonnés non réabonnés
-// ✅ v4.3 : plan gratuit ignoré (pas d'expires_at)
+// plan gratuit ignoré (pas d'expires_at)
 // ══════════════════════════════════════════════════════════════
 async function expireArtisans() {
   try {
@@ -128,8 +133,8 @@ expireArtisans();
 setInterval(expireArtisans, 24 * 60 * 60 * 1000);
 
 // ══════════════════════════════════════════════════════════════
-// GÉNÉRATEUR PDF — stream vers res (HTTP) uniquement
-// ✅ v4.3 : Promise sur res 'finish' — plus de race condition
+// GÉNÉRATEUR PDF
+// ✅ v4.4 : fcfa() partout — plus d'espace insécable
 // ══════════════════════════════════════════════════════════════
 function generatePDF({ artisan, numero, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT, res }) {
   return new Promise((resolve, reject) => {
@@ -191,9 +196,11 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
     lignes.forEach((l, idx) => {
       const total = l.quantite * l.prix_unitaire;
       doc.rect(50, y, pageW, 20).fill(idx % 2 === 0 ? WHITE : GRAY);
+      // ✅ v4.4 : fcfa() au lieu de toLocaleString
       [l.designation, String(l.quantite), l.unite || 'u.',
-       Number(l.prix_unitaire).toLocaleString('fr-FR'),
-       Number(total).toLocaleString('fr-FR')].forEach((c, i) => {
+       fcfa(l.prix_unitaire),
+       fcfa(total)
+      ].forEach((c, i) => {
         doc.fillColor(DARK).font('Helvetica').fontSize(9)
            .text(c, colX[i], y + 6, { width: colW[i], align: i > 0 ? 'center' : 'left' });
       });
@@ -206,7 +213,8 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
       doc.fillColor(BLUE).font('Helvetica-Bold').fontSize(9)
          .text("Main-d'œuvre", colX[0], y + 6, { width: colW[0] });
       doc.fillColor(DARK).font('Helvetica').fontSize(9)
-         .text(Number(main_oeuvre).toLocaleString('fr-FR'), colX[4], y + 6, { width: colW[4], align: 'center' });
+         // ✅ v4.4
+         .text(fcfa(main_oeuvre), colX[4], y + 6, { width: colW[4], align: 'center' });
       y += 20;
     }
 
@@ -229,7 +237,8 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
          .font(isTotal ? 'Helvetica-Bold' : 'Helvetica')
          .fontSize(isTotal ? 11 : 9)
          .text(label, 365, y + (isTotal ? 5 : 2), { width: 120 })
-         .text(`${Number(val).toLocaleString('fr-FR')} FCFA`, 490, y + (isTotal ? 5 : 2), { width: 50, align: 'right' });
+         // ✅ v4.4
+         .text(`${fcfa(val)} FCFA`, 490, y + (isTotal ? 5 : 2), { width: 50, align: 'right' });
       y += isTotal ? 24 : 18;
     });
 
@@ -250,7 +259,6 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
 // ROUTES AUTH
 // ══════════════════════════════════════════════════════════════
 
-// POST /api/auth/register
 app.post('/api/auth/register', async (req, res) => {
   const { nom, prenom, telephone, metier, password } = req.body;
   if (!nom || !telephone || !metier || !password) {
@@ -276,8 +284,6 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// POST /api/auth/login
-// ✅ v4.3 : vérif expires_at uniquement pour plan != gratuit
 app.post('/api/auth/login', async (req, res) => {
   const { telephone, password } = req.body;
   try {
@@ -288,7 +294,6 @@ app.post('/api/auth/login', async (req, res) => {
     const valid = await bcrypt.compare(password, artisan.password_hash);
     if (!valid) return res.status(401).json({ error: 'Numéro ou mot de passe incorrect' });
 
-    // Expiration uniquement pour abonnés payants
     if (artisan.statut === 'actif' && artisan.plan !== 'gratuit' && artisan.expires_at && new Date(artisan.expires_at) < new Date()) {
       await pool.query(`UPDATE artisans SET statut='suspendu' WHERE id=$1`, [artisan.id]);
       return res.status(403).json({
@@ -333,7 +338,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// POST /api/auth/activate
 app.post('/api/auth/activate', authMiddleware, async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'Code manquant' });
@@ -426,7 +430,6 @@ app.get('/api/tarifs', authMiddleware, async (req, res) => {
 // ROUTES DEVIS
 // ══════════════════════════════════════════════════════════════
 
-// POST /api/devis
 app.post('/api/devis', authMiddleware, async (req, res) => {
   const { client_nom, client_telephone, objet, type_travaux, lignes, main_oeuvre, acompte, surfaces } = req.body;
   if (!client_nom || !lignes || !lignes.length) {
@@ -436,13 +439,11 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
     const artisanResult = await pool.query('SELECT * FROM artisans WHERE id=$1', [req.user.id]);
     const artisan = artisanResult.rows[0];
 
-    if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
-      return res.status(403).json({ error: 'Quota gratuit atteint.', quota_depasse: true });
-    }
-
-    // ✅ v4.3 : vérif statut suspendu avant création
     if (artisan.statut === 'suspendu') {
       return res.status(403).json({ error: "Votre abonnement a expiré. Contactez l'administrateur." });
+    }
+    if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
+      return res.status(403).json({ error: 'Quota gratuit atteint.', quota_depasse: true });
     }
 
     const totalFournitures = lignes.reduce((sum, l) => sum + (l.quantite * l.prix_unitaire), 0);
@@ -479,8 +480,6 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/devis/:id/pdf — génère et streame le PDF à la volée
-// ✅ v4.3 : token en query param pour window.open(), Promise sur res finish
 app.get('/api/devis/:id/pdf', async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
   if (!token) return res.status(401).json({ error: 'Token manquant' });
@@ -526,7 +525,6 @@ app.get('/api/devis/:id/pdf', async (req, res) => {
   }
 });
 
-// ✅ v4.3 : POST /api/devis/:id/share — génère token partage public 7j
 app.post('/api/devis/:id/share', authMiddleware, async (req, res) => {
   try {
     const devisResult = await pool.query(
@@ -541,16 +539,17 @@ app.post('/api/devis/:id/share', authMiddleware, async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
-    const shareUrl = `${BACKEND_URL}/api/devis/view/${shareToken}`;
-
-    res.json({ share_url: shareUrl, numero: devis.numero, expires_in: '7 jours' });
+    res.json({
+      share_url:  `${BACKEND_URL}/api/devis/view/${shareToken}`,
+      numero:     devis.numero,
+      expires_in: '7 jours'
+    });
   } catch (err) {
     console.error('[SHARE]', err);
     res.status(500).json({ error: 'Erreur génération lien partage' });
   }
 });
 
-// ✅ v4.3 : GET /api/devis/view/:shareToken — PDF public via lien de partage
 app.get('/api/devis/view/:shareToken', async (req, res) => {
   try {
     const decoded = jwt.verify(req.params.shareToken, process.env.JWT_SECRET);
@@ -585,12 +584,13 @@ app.get('/api/devis/view/:shareToken', async (req, res) => {
     });
   } catch (err) {
     console.error('[VIEW]', err);
-    if (!res.headersSent) res.status(err.name === 'TokenExpiredError' ? 410 : 500)
-      .json({ error: err.name === 'TokenExpiredError' ? 'Lien expiré' : 'Erreur serveur' });
+    if (!res.headersSent) {
+      res.status(err.name === 'TokenExpiredError' ? 410 : 500)
+         .json({ error: err.name === 'TokenExpiredError' ? 'Lien expiré' : 'Erreur serveur' });
+    }
   }
 });
 
-// GET /api/devis
 app.get('/api/devis', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
@@ -602,7 +602,6 @@ app.get('/api/devis', authMiddleware, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
-// GET /api/devis/:id
 app.get('/api/devis/:id', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
@@ -616,8 +615,8 @@ app.get('/api/devis/:id', authMiddleware, async (req, res) => {
 
 // ══════════════════════════════════════════════════════════════
 // ROUTE BOT
-// ✅ v4.3 : vérif statut suspendu avant appel Mistral
 // ══════════════════════════════════════════════════════════════
+
 app.post('/api/bot/message', authMiddleware, async (req, res) => {
   const { message, history, devis_draft } = req.body;
   try {
@@ -626,14 +625,12 @@ app.post('/api/bot/message', authMiddleware, async (req, res) => {
     );
     const artisan = artisanResult.rows[0];
 
-    // ✅ Bloquer si suspendu même avec JWT encore valide
     if (artisan.statut === 'suspendu') {
       return res.status(403).json({ error: "Votre abonnement a expiré. Contactez l'administrateur." });
     }
-
     if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
       return res.json({
-        reply: `🔒 Vous avez utilisé vos 3 devis gratuits.\n\nAbonnez-vous au plan Starter (1 000 FCFA/mois) via Wave CI ou Orange Money.\n\nEnvoyez "STARTER" par WhatsApp au numéro de l'administrateur pour activer votre abonnement.`,
+        reply: `🔒 Vous avez utilisé vos 3 devis gratuits.\n\nAbonnez-vous au plan Starter (1 000 FCFA/mois) via Wave CI ou Orange Money.\n\nContactez l'administrateur par WhatsApp pour activer votre abonnement.`,
         action: null,
         quota_depasse: true
       });
@@ -660,7 +657,7 @@ WORKFLOW :
 RÈGLES ABSOLUES :
 - Français simple, comme on parle à Abidjan
 - UNE question par réponse
-- PAS de markdown dans tes réponses : pas de **, pas de ###, pas de listes à tirets — texte brut uniquement
+- PAS de markdown : pas de **, pas de ###, pas de tirets — texte brut uniquement
 - Quand le devis est complet et CONFIRMÉ, réponds UNIQUEMENT avec ce JSON EXACT (rien avant, rien après, pas de backticks) :
 {"action":"create_devis","data":{"client_nom":"NOM","client_telephone":"TEL_OU_NULL","type_travaux":"TYPE","lignes":[{"designation":"NOM","quantite":0,"unite":"UNITE","prix_unitaire":0}],"surfaces":[],"main_oeuvre":0,"acompte":0}}
 - Pour les surfaces, calcule longueur × largeur et propose +10% pour chutes
@@ -677,10 +674,8 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}` },
       body: JSON.stringify({
-        model:       'mistral-large-latest',
-        messages:    [{ role: 'system', content: systemPrompt }, ...messages],
-        temperature: 0.3,
-        max_tokens:  600
+        model: 'mistral-large-latest', messages: [{ role: 'system', content: systemPrompt }, ...messages],
+        temperature: 0.3, max_tokens: 600
       })
     });
 
@@ -734,13 +729,12 @@ IMPORTANT : JSON seulement, rien d'autre.`;
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.MISTRAL_API_KEY}` },
       body: JSON.stringify({
-        model:       'pixtral-large-latest',
-        messages:    [{ role: 'user', content: [
+        model: 'pixtral-large-latest',
+        messages: [{ role: 'user', content: [
           { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64Data}` } },
           { type: 'text', text: systemPrompt }
         ]}],
-        temperature: 0.1,
-        max_tokens:  800
+        temperature: 0.1, max_tokens: 800
       })
     });
     const data = await response.json();
@@ -762,8 +756,8 @@ IMPORTANT : JSON seulement, rien d'autre.`;
 // ══════════════════════════════════════════════════════════════
 
 app.post('/api/admin/login', (req, res) => {
-  const { password }     = req.body;
-  const ADMIN_PASSWORD   = process.env.ADMIN_PASSWORD || 'devispro_admin_2026';
+  const { password }   = req.body;
+  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'devispro_admin_2026';
   if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Mot de passe incorrect' });
   const token = jwt.sign({ admin: true }, process.env.JWT_SECRET, { expiresIn: '8h' });
   res.json({ token });
@@ -919,6 +913,6 @@ app.delete('/api/admin/codes/:id', adminAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ══════════════════════════════════════════════════════════════
-app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '4.3.0' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '4.4.0' }));
 
-app.listen(PORT, () => console.log(`DevisPro CI backend v4.3 running on port ${PORT}`));
+app.listen(PORT, () => console.log(`DevisPro CI backend v4.4 running on port ${PORT}`));
