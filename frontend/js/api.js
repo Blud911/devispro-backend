@@ -1,10 +1,10 @@
-// ── api.js v4 — Client HTTP DevisPro CI ───────────────────────
+// ── api.js v4.3 — Client HTTP DevisPro CI ─────────────────────
 const API_BASE = window.DEVISPRO_API_BASE || 'https://blud911-devispro-backend.onrender.com';
 
 const Api = {
   token: localStorage.getItem('dp_token'),
 
-  setToken(t) { this.token = t; localStorage.setItem('dp_token', t); },
+  setToken(t)  { this.token = t; localStorage.setItem('dp_token', t); },
   clearToken() { this.token = null; localStorage.removeItem('dp_token'); localStorage.removeItem('dp_artisan'); },
 
   async request(method, path, body) {
@@ -16,15 +16,13 @@ const Api = {
     return data;
   },
 
-  // Login : gère le 403 en_attente sans throw — retourne data brute
   async login(telephone, password) {
-    const headers = { 'Content-Type': 'application/json' };
     const res  = await fetch(`${API_BASE}/api/auth/login`, {
-      method: 'POST', headers,
-      body: JSON.stringify({ telephone, password })
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ telephone, password })
     });
     const data = await res.json();
-    // 403 en_attente ou suspendu/expiré : on retourne les données telles quelles
     if (res.status === 403) return data;
     if (!res.ok) throw new Error(data.error || 'Numéro ou mot de passe incorrect');
     return data;
@@ -43,5 +41,13 @@ const Api = {
   listDevis()       { return this.request('GET',  '/api/devis'); },
   getDevis(id)      { return this.request('GET',  `/api/devis/${id}`); },
 
-  searchTarifs(q)   { return this.request('GET', `/api/tarifs?q=${encodeURIComponent(q)}`); },
+  // URL PDF privée avec token (pour visualisation personnelle)
+  getPdfUrl(devisId) {
+    return `${API_BASE}/api/devis/${devisId}/pdf?token=${encodeURIComponent(this.token)}`;
+  },
+
+  // ✅ v4.3 : génère un lien de partage public 7j pour WhatsApp
+  shareDevis(devisId) { return this.request('POST', `/api/devis/${devisId}/share`); },
+
+  searchTarifs(q) { return this.request('GET', `/api/tarifs?q=${encodeURIComponent(q)}`); },
 };
