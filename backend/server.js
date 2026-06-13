@@ -1,6 +1,7 @@
 // ══════════════════════════════════════════════════════════════
-// DevisPro CI — server.js v3
+// DevisPro CI — server.js v4
 // Node.js v24 : tous les require() en tête de fichier (règle critique)
+// v4 : expires_at (+30j à activation), cron quotidien, vérif login
 // ══════════════════════════════════════════════════════════════
 require('dotenv').config();
 
@@ -89,6 +90,34 @@ function makeActivationCode() {
 }
 
 // ══════════════════════════════════════════════════════════════
+// CRON QUOTIDIEN — expire les artisans non réabonnés
+// Tourne toutes les 24h dès le démarrage du serveur
+// ══════════════════════════════════════════════════════════════
+async function expireArtisans() {
+  try {
+    const result = await pool.query(
+      `UPDATE artisans
+       SET statut = 'suspendu'
+       WHERE statut = 'actif'
+         AND expires_at IS NOT NULL
+         AND expires_at < NOW()
+       RETURNING id, nom, telephone`
+    );
+    if (result.rowCount > 0) {
+      console.log(`[CRON] ${result.rowCount} artisan(s) expirés :`, result.rows.map(r => `${r.nom} (${r.telephone})`).join(', '));
+    } else {
+      console.log('[CRON] Aucun artisan expiré.');
+    }
+  } catch (err) {
+    console.error('[CRON] Erreur expiration artisans :', err.message);
+  }
+}
+
+// Lancer le cron au démarrage puis toutes les 24h
+expireArtisans();
+setInterval(expireArtisans, 24 * 60 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════════
 // ROUTES AUTH
 // ══════════════════════════════════════════════════════════════
 
@@ -105,7 +134,6 @@ app.post('/api/auth/register', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,0,'en_attente',NOW()) RETURNING id`,
       [uuidv4(), nom, prenom || '', telephone, metier, hash]
     );
-    // Générer un token temporaire pour permettre l'activation du code
     const tempToken = jwt.sign({ id: result.rows[0].id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({
       message: "Inscription reçue. Entrez votre code d'activation.",
@@ -120,6 +148,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // POST /api/auth/login
+// v4 : vérifie expires_at → passe statut 'suspendu' si expiré
 app.post('/api/auth/login', async (req, res) => {
   const { telephone, password } = req.body;
   try {
@@ -129,6 +158,15 @@ app.post('/api/auth/login', async (req, res) => {
 
     const valid = await bcrypt.compare(password, artisan.password_hash);
     if (!valid) return res.status(401).json({ error: 'Numéro ou mot de passe incorrect' });
+
+    // Vérification expiration (double sécurité avec le cron)
+    if (artisan.statut === 'actif' && artisan.expires_at && new Date(artisan.expires_at) < new Date()) {
+      await pool.query(`UPDATE artisans SET statut='suspendu' WHERE id=$1`, [artisan.id]);
+      return res.status(403).json({
+        error: 'Votre abonnement a expiré. Contactez l\'administrateur pour renouveler.',
+        statut: 'expiré'
+      });
+    }
 
     if (artisan.statut === 'en_attente') {
       const tempToken = jwt.sign({ id: artisan.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
@@ -140,7 +178,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
     if (artisan.statut === 'suspendu') {
       return res.status(403).json({
-        error: 'Compte suspendu. Contactez l\'administrateur.',
+        error: 'Votre abonnement a expiré. Contactez l\'administrateur pour renouveler.',
         statut: 'suspendu'
       });
     }
@@ -155,7 +193,8 @@ app.post('/api/auth/login', async (req, res) => {
         metier: artisan.metier,
         plan: artisan.plan,
         devis_count: artisan.devis_count,
-        statut: artisan.statut
+        statut: artisan.statut,
+        expires_at: artisan.expires_at
       }
     });
   } catch (err) {
@@ -165,6 +204,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // POST /api/auth/activate — saisie du code d'activation
+// v4 : set expires_at = NOW() + 30j à l'activation
 app.post('/api/auth/activate', authMiddleware, async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'Code manquant' });
@@ -184,14 +224,18 @@ app.post('/api/auth/activate', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Ce code ne vous est pas destiné' });
     }
 
-    await pool.query('UPDATE artisans SET statut=$1 WHERE id=$2', ['actif', req.user.id]);
+    // Activer + fixer expires_at = NOW() + 30 jours
+    await pool.query(
+      `UPDATE artisans SET statut='actif', expires_at=NOW() + INTERVAL '30 days' WHERE id=$1`,
+      [req.user.id]
+    );
     await pool.query(
       'UPDATE activation_codes SET used=true, used_at=NOW(), artisan_id=$1 WHERE id=$2',
       [req.user.id, activationCode.id]
     );
 
     const artisanResult = await pool.query(
-      'SELECT id, nom, telephone, metier, plan, devis_count, statut FROM artisans WHERE id=$1',
+      'SELECT id, nom, telephone, metier, plan, devis_count, statut, expires_at FROM artisans WHERE id=$1',
       [req.user.id]
     );
     const artisan = artisanResult.rows[0];
@@ -211,7 +255,7 @@ app.post('/api/auth/activate', authMiddleware, async (req, res) => {
 app.get('/api/profil', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier, logo_url, devis_count, plan, statut FROM artisans WHERE id = $1',
+      'SELECT id, nom, prenom, telephone, metier, logo_url, devis_count, plan, statut, expires_at FROM artisans WHERE id = $1',
       [req.user.id]
     );
     res.json(result.rows[0]);
@@ -587,12 +631,18 @@ app.get('/api/admin/stats', adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
+// v4 : retourne expires_at dans la liste artisans
 app.get('/api/admin/artisans', adminAuth, async (req, res) => {
   const page=parseInt(req.query.page)||1, limit=20, offset=(page-1)*limit;
   const search=req.query.search?`%${req.query.search}%`:'%';
   try {
     const [rows,total]=await Promise.all([
-      pool.query(`SELECT id,nom,prenom,telephone,metier,plan,devis_count,statut,created_at FROM artisans WHERE nom ILIKE $1 OR telephone ILIKE $1 OR metier ILIKE $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,[search,limit,offset]),
+      pool.query(
+        `SELECT id,nom,prenom,telephone,metier,plan,devis_count,statut,expires_at,created_at
+         FROM artisans WHERE nom ILIKE $1 OR telephone ILIKE $1 OR metier ILIKE $1
+         ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+        [search,limit,offset]
+      ),
       pool.query('SELECT COUNT(*) FROM artisans WHERE nom ILIKE $1 OR telephone ILIKE $1 OR metier ILIKE $1',[search])
     ]);
     res.json({artisans:rows.rows,total:parseInt(total.rows[0].count),page,limit});
@@ -611,6 +661,17 @@ app.put('/api/admin/artisans/:id/statut', adminAuth, async (req, res) => {
   if (!['en_attente','actif','suspendu'].includes(statut)) return res.status(400).json({ error: 'Statut invalide' });
   try { await pool.query('UPDATE artisans SET statut=$1 WHERE id=$2',[statut,req.params.id]); res.json({success:true}); }
   catch(err){res.status(500).json({error:'Erreur serveur'});}
+});
+
+// v4 : renouveler abonnement = actif + expires_at + 30j depuis maintenant
+app.put('/api/admin/artisans/:id/renouveler', adminAuth, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE artisans SET statut='actif', expires_at=NOW() + INTERVAL '30 days' WHERE id=$1`,
+      [req.params.id]
+    );
+    res.json({ success: true });
+  } catch(err){ res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
 app.delete('/api/admin/artisans/:id', adminAuth, async (req, res) => {
@@ -635,7 +696,8 @@ app.get('/api/admin/logs', adminAuth, async (req, res) => {
     const recent_errors = await pool.query(
       `SELECT 'Devis sans PDF' as type, COUNT(*) as count, MAX(created_at) as last_seen FROM devis WHERE pdf_url IS NULL AND created_at > NOW() - INTERVAL '24h'
        UNION ALL SELECT 'Artisans en attente' as type, COUNT(*) as count, MAX(created_at) as last_seen FROM artisans WHERE statut='en_attente'
-       UNION ALL SELECT 'Codes non utilisés' as type, COUNT(*) as count, MAX(created_at) as last_seen FROM activation_codes WHERE used=false`
+       UNION ALL SELECT 'Codes non utilisés' as type, COUNT(*) as count, MAX(created_at) as last_seen FROM activation_codes WHERE used=false
+       UNION ALL SELECT 'Abonnements expirés sous 3j' as type, COUNT(*) as count, MAX(expires_at) as last_seen FROM artisans WHERE statut='actif' AND expires_at IS NOT NULL AND expires_at BETWEEN NOW() AND NOW() + INTERVAL '3 days'`
     );
     res.json({ status:'ok', db_connected:true, uptime:process.uptime(), memory:process.memoryUsage(), alerts:recent_errors.rows });
   } catch(err){res.status(500).json({error:'Erreur serveur',db_connected:false});}
@@ -681,6 +743,6 @@ app.delete('/api/admin/codes/:id', adminAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ══════════════════════════════════════════════════════════════
-app.get('/health', (req, res) => res.json({ status:'ok', app:'DevisPro CI', version:'3.0.0' }));
+app.get('/health', (req, res) => res.json({ status:'ok', app:'DevisPro CI', version:'4.0.0' }));
 
-app.listen(PORT, () => console.log(`DevisPro CI backend running on port ${PORT}`));
+app.listen(PORT, () => console.log(`DevisPro CI backend v4 running on port ${PORT}`));

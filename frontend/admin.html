@@ -98,6 +98,7 @@
     .btn-green     { background: rgba(14,158,110,0.12); color: var(--green); border: 1px solid rgba(14,158,110,0.3); }
     .btn-danger    { background: rgba(229,62,62,0.1); color: var(--red); border: 1px solid rgba(229,62,62,0.3); }
     .btn-wa        { background: rgba(37,211,102,0.12); color: #16a34a; border: 1px solid rgba(37,211,102,0.3); text-decoration: none; }
+    .btn-amber     { background: rgba(245,158,11,0.12); color: var(--amber); border: 1px solid rgba(245,158,11,0.35); }
     .btn-sm  { padding: 5px 10px; font-size: 11px; border-radius: 6px; }
     .btn-icon { width: 32px; height: 32px; padding: 0; border-radius: 7px; justify-content: center; }
 
@@ -123,8 +124,11 @@
 
     /* BADGES */
     .badge { display: inline-block; padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-    .badge-used   { background: rgba(14,158,110,0.12); color: var(--green); }
-    .badge-unused { background: rgba(245,158,11,0.12); color: var(--amber); }
+    .badge-used    { background: rgba(14,158,110,0.12); color: var(--green); }
+    .badge-unused  { background: rgba(245,158,11,0.12); color: var(--amber); }
+    .badge-expiry  { background: rgba(229,62,62,0.1); color: var(--red); font-size: 10px; padding: 2px 7px; }
+    .badge-expiry-soon { background: rgba(245,158,11,0.12); color: var(--amber); font-size: 10px; padding: 2px 7px; }
+    .badge-expiry-ok   { background: rgba(14,158,110,0.1); color: var(--green); font-size: 10px; padding: 2px 7px; }
 
     /* TABLE */
     .table-wrap { overflow-x: auto; }
@@ -152,6 +156,7 @@
     .log-card-sub   { font-size: 12px; color: var(--gray); margin-top: 4px; }
     .alert-row { padding: 11px 14px; border-radius: 8px; background: #FFF5E6; border: 1px solid #F6C26D; display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
     .alert-row.ok { background: #F0FFF4; border-color: #9AE6B4; }
+    .alert-row.red { background: #FFF5F5; border-color: #FC8181; }
     .alert-icon { font-size: 16px; flex-shrink: 0; }
     .alert-text { font-size: 13px; color: var(--dark); }
 
@@ -166,6 +171,7 @@
     .toast.show    { transform: translateX(-50%) translateY(0); }
     .toast.success { background: var(--green); }
     .toast.error   { background: var(--red); }
+    .toast.amber   { background: var(--amber); color: #fff; }
 
     /* EMPTY / LOADING */
     .empty { padding: 40px; text-align: center; color: var(--gray); font-size: 13px; }
@@ -204,7 +210,7 @@
       <div class="sidebar-logo-icon">D</div>
       <div>
         <div class="sidebar-logo-name">DevisPro CI</div>
-        <div class="sidebar-logo-sub">Admin Panel</div>
+        <div class="sidebar-logo-sub">Admin Panel v4</div>
       </div>
     </div>
     <nav class="sidebar-nav">
@@ -226,6 +232,7 @@
     <div id="section-dashboard" class="section active">
       <div class="topbar">
         <div><div class="topbar-title">Dashboard</div><div class="topbar-sub" id="last-update">Chargement...</div></div>
+        <button class="btn btn-secondary btn-sm" onclick="loadDashboard()"><i class="ti ti-refresh"></i> Rafraîchir</button>
       </div>
       <div class="stats-grid" id="stats-grid"><div class="loading">Chargement...</div></div>
       <div class="card">
@@ -241,7 +248,6 @@
         <button class="btn btn-secondary btn-sm" onclick="loadCodes()"><i class="ti ti-refresh"></i> Rafraîchir</button>
       </div>
 
-      <!-- Génération -->
       <div class="card" style="margin-bottom:20px;">
         <div class="card-header"><div class="card-title"><i class="ti ti-plus"></i> Générer un code</div></div>
         <div class="card-body">
@@ -255,7 +261,6 @@
         </div>
       </div>
 
-      <!-- Liste codes -->
       <div class="card">
         <div class="card-header"><div class="card-title"><i class="ti ti-list"></i> Liste des codes</div></div>
         <div class="card-body">
@@ -275,6 +280,7 @@
     <div id="section-artisans" class="section">
       <div class="topbar">
         <div><div class="topbar-title">Artisans</div><div class="topbar-sub" id="artisans-count">—</div></div>
+        <button class="btn btn-secondary btn-sm" onclick="loadArtisans(artisansPage)"><i class="ti ti-refresh"></i> Rafraîchir</button>
       </div>
       <div class="card">
         <div class="card-header">
@@ -286,7 +292,7 @@
             <table>
               <thead><tr>
                 <th>Artisan</th><th>Téléphone</th><th>Métier</th>
-                <th>Plan</th><th>Devis</th><th>Statut</th><th>Inscription</th><th>Actions</th>
+                <th>Plan</th><th>Devis</th><th>Statut</th><th>Expire le</th><th>Actions</th>
               </tr></thead>
               <tbody id="artisans-tbody"><tr><td colspan="8" class="loading">Chargement...</td></tr></tbody>
             </table>
@@ -300,6 +306,7 @@
     <div id="section-devis" class="section">
       <div class="topbar">
         <div><div class="topbar-title">Devis</div><div class="topbar-sub" id="devis-count">—</div></div>
+        <button class="btn btn-secondary btn-sm" onclick="loadDevis(devisPage)"><i class="ti ti-refresh"></i> Rafraîchir</button>
       </div>
       <div class="card">
         <div class="card-header">
@@ -473,10 +480,8 @@ function renderCodes() {
     const phoneHtml = c.artisan_tel
       ? `<div class="code-phone"><i class="ti ti-device-mobile" style="font-size:12px;"></i>${c.artisan_tel}${c.artisan_nom?' — '+c.artisan_nom:''}</div>`
       : `<div class="code-phone empty"><i class="ti ti-device-mobile" style="font-size:12px;"></i>Non assigné</div>`;
-
     const waLink = c.artisan_tel ? buildWALink(c.artisan_tel, c.code) : null;
     const btnWA  = waLink ? `<a class="btn btn-wa btn-sm" href="${waLink}" target="_blank"><i class="ti ti-brand-whatsapp"></i> Envoyer</a>` : '';
-
     return `
       <div class="code-item fadeIn">
         <div class="code-item-top">
@@ -504,8 +509,6 @@ async function generateCodes() {
     document.getElementById('gen-phone').value='';
     await loadCodes();
     showToast(`✓ ${data.count} code${data.count>1?'s':''} généré${data.count>1?'s':''}`, 'success');
-
-    // Si numéro fourni → ouvrir WhatsApp directement
     if(phone && data.generated.length===1) {
       setTimeout(()=>{
         const link = buildWALink(phone, data.generated[0].code);
@@ -518,7 +521,7 @@ async function generateCodes() {
 function buildWALink(phone, code) {
   if(!phone) return null;
   let num = phone.replace(/[\s\-\.\(\)]/g,'');
-  if(num.startsWith('+225'))     num=num.slice(1);
+  if(num.startsWith('+225'))      num=num.slice(1);
   else if(num.startsWith('00225')) num=num.slice(2);
   else if(!num.startsWith('225')) num='225'+num;
   const msg = encodeURIComponent(
@@ -527,16 +530,27 @@ function buildWALink(phone, code) {
   return `https://wa.me/${num}?text=${msg}`;
 }
 
+function buildWARappelLink(phone, nom, expiresAt) {
+  if(!phone) return null;
+  let num = phone.replace(/[\s\-\.\(\)]/g,'');
+  if(num.startsWith('+225'))      num=num.slice(1);
+  else if(num.startsWith('00225')) num=num.slice(2);
+  else if(!num.startsWith('225')) num='225'+num;
+  const dateExp = expiresAt ? new Date(expiresAt).toLocaleDateString('fr-FR') : '—';
+  const msg = encodeURIComponent(
+    `Bonjour ${nom} 👋\n\nVotre abonnement DevisPro CI expire le *${dateExp}*.\n\nPour continuer à créer vos devis, renouvelez dès maintenant via Wave CI ou Orange Money.\n\nContactez-nous pour plus d'infos.\n\n— NexeraSecurité`
+  );
+  return `https://wa.me/${num}?text=${msg}`;
+}
+
 function copier(texte) {
   navigator.clipboard.writeText(texte).then(()=>showToast(`Code ${texte} copié !`,'success'));
 }
-
 function copyAllUnused() {
   const unused=allCodes.filter(c=>!c.used).map(c=>c.code);
   if(!unused.length){showToast('Aucun code libre','error');return;}
   navigator.clipboard.writeText(unused.join('\n')).then(()=>showToast(`${unused.length} codes copiés`,'success'));
 }
-
 async function deleteCode(id,code) {
   if(!confirm(`Supprimer le code ${code} ?`)) return;
   try { await apiDelete(`/api/admin/codes/${id}`); await loadCodes(); showToast(`Code ${code} supprimé`,'success'); }
@@ -544,21 +558,44 @@ async function deleteCode(id,code) {
 }
 
 // ── ARTISANS ──
-async function loadArtisans(page=1) {
-  artisansPage=page;
+async function loadArtisans(page) {
+  artisansPage = page || artisansPage;
   const search=document.getElementById('artisans-search').value;
   try {
-    const data=await apiGet(`/api/admin/artisans?page=${page}&search=${encodeURIComponent(search)}`);
+    const data=await apiGet(`/api/admin/artisans?page=${artisansPage}&search=${encodeURIComponent(search)}`);
     document.getElementById('artisans-count').textContent=`${data.total} artisan${data.total>1?'s':''} inscrits`;
     const tbody=document.getElementById('artisans-tbody');
     if(!data.artisans.length){tbody.innerHTML=`<tr><td colspan="8"><div class="empty">Aucun artisan trouvé</div></td></tr>`;return;}
     tbody.innerHTML=data.artisans.map(a=>{
       const statutStyle={actif:'background:#C6F6D5;color:#276749;',en_attente:'background:#FEFCBF;color:#744210;',suspendu:'background:#FED7D7;color:#9B2C2C;'}[a.statut]||'';
       const statutLabel={actif:'✅ Actif',en_attente:'⏳ En attente',suspendu:'🚫 Suspendu'}[a.statut]||a.statut;
+
+      // Calcul jours restants
+      let expireBadge = '—';
+      let joursRestants = null;
+      if(a.expires_at) {
+        const now = new Date();
+        const exp = new Date(a.expires_at);
+        joursRestants = Math.ceil((exp - now) / (1000 * 60 * 60 * 24));
+        if(joursRestants <= 0) {
+          expireBadge = `<span class="badge badge-expiry">Expiré</span>`;
+        } else if(joursRestants <= 3) {
+          expireBadge = `<span class="badge badge-expiry-soon">J-${joursRestants}</span><br><small style="color:var(--gray);font-size:10px;">${formatDate(a.expires_at)}</small>`;
+        } else {
+          expireBadge = `<span class="badge badge-expiry-ok">J-${joursRestants}</span><br><small style="color:var(--gray);font-size:10px;">${formatDate(a.expires_at)}</small>`;
+        }
+      }
+
       let btnVal='';
       if(a.statut==='en_attente') btnVal=`<button class="btn btn-green btn-sm" onclick="updateStatut('${a.id}','actif')">✅ Valider</button>`;
       else if(a.statut==='actif') btnVal=`<button class="btn btn-danger btn-sm" onclick="updateStatut('${a.id}','suspendu')">🚫</button>`;
-      else if(a.statut==='suspendu') btnVal=`<button class="btn btn-green btn-sm" onclick="updateStatut('${a.id}','actif')">↩</button>`;
+      else if(a.statut==='suspendu') btnVal=`<button class="btn btn-green btn-sm" onclick="renouvelerArtisan('${a.id}','${a.nom}')">🔄 Renouveler</button>`;
+
+      // Bouton WhatsApp rappel (visible si actif et expire dans ≤ 3 jours)
+      const btnRappelWA = (a.statut==='actif' && a.expires_at && joursRestants !== null && joursRestants <= 3)
+        ? `<a class="btn btn-amber btn-sm" href="${buildWARappelLink(a.telephone,a.nom,a.expires_at)}" target="_blank" title="Envoyer rappel WhatsApp"><i class="ti ti-brand-whatsapp"></i> Rappel</a>`
+        : '';
+
       return `<tr>
         <td><div class="td-name">${a.nom} ${a.prenom||''}</div><div class="td-sub">${a.id.slice(0,8)}...</div></td>
         <td>${a.telephone}</td><td>${a.metier}</td>
@@ -569,30 +606,45 @@ async function loadArtisans(page=1) {
         </select></td>
         <td><strong>${a.devis_count}</strong></td>
         <td><span style="display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700;${statutStyle}">${statutLabel}</span></td>
-        <td>${formatDate(a.created_at)}</td>
+        <td>${expireBadge}</td>
         <td style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
           ${btnVal}
+          ${btnRappelWA}
           <button class="btn btn-danger btn-sm btn-icon" onclick="deleteArtisan('${a.id}','${a.nom}')"><i class="ti ti-trash"></i></button>
         </td>
       </tr>`;
     }).join('');
-    renderPagination('artisans-pagination',data.total,data.limit,page,loadArtisans);
+    renderPagination('artisans-pagination',data.total,data.limit,artisansPage,loadArtisans);
   } catch(err){document.getElementById('artisans-tbody').innerHTML=`<tr><td colspan="8" class="loading">Erreur : ${err.message}</td></tr>`;}
 }
 
-async function updatePlan(id,plan) { try{await apiPut(`/api/admin/artisans/${id}/plan`,{plan});}catch{alert('Erreur');} }
-async function updateStatut(id,statut) { try{await apiPut(`/api/admin/artisans/${id}/statut`,{statut});loadArtisans(artisansPage);}catch{alert('Erreur');} }
+async function updatePlan(id,plan) { try{await apiPut(`/api/admin/artisans/${id}/plan`,{plan});}catch{showToast('Erreur','error');} }
+async function updateStatut(id,statut) {
+  try{
+    await apiPut(`/api/admin/artisans/${id}/statut`,{statut});
+    loadArtisans(artisansPage);
+    showToast('Statut mis à jour','success');
+  }catch{showToast('Erreur','error');}
+}
+async function renouvelerArtisan(id,nom) {
+  if(!confirm(`Renouveler l'abonnement de ${nom} pour 30 jours ?`)) return;
+  try{
+    await apiPut(`/api/admin/artisans/${id}/renouveler`,{});
+    loadArtisans(artisansPage);
+    showToast(`✅ Abonnement de ${nom} renouvelé +30j`,'success');
+  }catch{showToast('Erreur renouvellement','error');}
+}
 async function deleteArtisan(id,nom) {
   if(!confirm(`Supprimer "${nom}" ?`)) return;
-  try{await apiDelete(`/api/admin/artisans/${id}`);loadArtisans(artisansPage);}catch{alert('Erreur');}
+  try{await apiDelete(`/api/admin/artisans/${id}`);loadArtisans(artisansPage);}catch{showToast('Erreur','error');}
 }
 
 // ── DEVIS ──
-async function loadDevis(page=1) {
-  devisPage=page;
+async function loadDevis(page) {
+  devisPage = page || devisPage;
   const search=document.getElementById('devis-search').value;
   try {
-    const data=await apiGet(`/api/admin/devis?page=${page}&search=${encodeURIComponent(search)}`);
+    const data=await apiGet(`/api/admin/devis?page=${devisPage}&search=${encodeURIComponent(search)}`);
     document.getElementById('devis-count').textContent=`${data.total} devis`;
     const tbody=document.getElementById('devis-tbody');
     if(!data.devis.length){tbody.innerHTML=`<tr><td colspan="6"><div class="empty">Aucun devis</div></td></tr>`;return;}
@@ -604,7 +656,7 @@ async function loadDevis(page=1) {
       <td><span style="background:rgba(56,161,105,0.12);color:#276749;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;">${d.statut}</span></td>
       <td>${formatDate(d.created_at)}</td>
     </tr>`).join('');
-    renderPagination('devis-pagination',data.total,data.limit,page,loadDevis);
+    renderPagination('devis-pagination',data.total,data.limit,devisPage,loadDevis);
   } catch(err){document.getElementById('devis-tbody').innerHTML=`<tr><td colspan="6" class="loading">Erreur</td></tr>`;}
 }
 
@@ -619,11 +671,13 @@ async function loadLogs() {
       <div class="log-card"><div class="log-card-title">⏱ Uptime</div><div class="log-card-value">${h}h ${m}m</div><div class="log-card-sub">Depuis dernier démarrage</div></div>
       <div class="log-card"><div class="log-card-title">🧠 Mémoire</div><div class="log-card-value">${mem} MB</div><div class="log-card-sub">Heap utilisé</div></div>`;
     const alerts=document.getElementById('alerts-list');
+    const alertIcons={ 'Devis sans PDF':'⚠️', 'Artisans en attente':'⏳', 'Codes non utilisés':'🔑', 'Abonnements expirés sous 3j':'🔔' };
+    const alertClasses={ 'Abonnements expirés sous 3j':'red' };
     alerts.innerHTML = !data.alerts?.length
       ? `<div class="alert-row ok"><span class="alert-icon">✅</span><span>Aucune alerte active</span></div>`
       : data.alerts.map(a=>parseInt(a.count)>0
-          ? `<div class="alert-row"><span class="alert-icon">⚠️</span><span><strong>${a.count}</strong> × ${a.type}</span></div>`
-          : `<div class="alert-row ok"><span class="alert-icon">✅</span><span>${a.type} : OK</span></div>`
+          ? `<div class="alert-row ${alertClasses[a.type]||''}"><span class="alert-icon">${alertIcons[a.type]||'⚠️'}</span><span class="alert-text"><strong>${a.count}</strong> × ${a.type}</span></div>`
+          : `<div class="alert-row ok"><span class="alert-icon">✅</span><span class="alert-text">${a.type} : OK</span></div>`
         ).join('');
   } catch(err){document.getElementById('logs-grid').innerHTML=`<div class="loading">Erreur</div>`;}
 }
@@ -634,14 +688,15 @@ function formatDate(iso) {
   return new Date(iso).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'});
 }
 function renderPagination(containerId,total,limit,current,loadFn) {
-  const pages=Math.ceil(total/limit), el=document.getElementById(containerId);
+  const pages=Math.ceil(total/limit);
+  const el=document.getElementById(containerId);
   if(pages<=1){el.innerHTML='';return;}
-  let html=`<button class="page-btn" onclick="(${loadFn.name})(${current-1})" ${current===1?'disabled':''}>← Préc</button>`;
+  let html=`<button class="page-btn" onclick="${loadFn.name}(${current-1})" ${current===1?'disabled':''}>← Préc</button>`;
   for(let i=1;i<=pages;i++){
-    if(i===1||i===pages||Math.abs(i-current)<=1) html+=`<button class="page-btn ${i===current?'active':''}" onclick="(${loadFn.name})(${i})">${i}</button>`;
+    if(i===1||i===pages||Math.abs(i-current)<=1) html+=`<button class="page-btn ${i===current?'active':''}" onclick="${loadFn.name}(${i})">${i}</button>`;
     else if(Math.abs(i-current)===2) html+=`<span style="color:var(--gray);padding:0 4px;">…</span>`;
   }
-  html+=`<button class="page-btn" onclick="(${loadFn.name})(${current+1})" ${current===pages?'disabled':''}>Suiv →</button>`;
+  html+=`<button class="page-btn" onclick="${loadFn.name}(${current+1})" ${current===pages?'disabled':''}>Suiv →</button>`;
   html+=`<span class="page-info">${total} résultats</span>`;
   el.innerHTML=html;
 }
