@@ -1,8 +1,8 @@
-// DevisPro CI — sw.js v2
-// Correction : ne précacher que les fichiers qui existent réellement
+// DevisPro CI — sw.js v3
+// Bump cache v2 → v3 pour forcer rechargement après mise à jour v4
 
-const CACHE_STATIC  = 'devispro-static-v2';
-const CACHE_DYNAMIC = 'devispro-dynamic-v2';
+const CACHE_STATIC  = 'devispro-static-v3';
+const CACHE_DYNAMIC = 'devispro-dynamic-v3';
 
 const STATIC_ASSETS = [
   '/app.html',
@@ -18,7 +18,6 @@ const STATIC_ASSETS = [
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_STATIC).then(cache => {
-      // addAll individuel pour ne pas bloquer si un fichier manque
       return Promise.allSettled(
         STATIC_ASSETS.map(url =>
           cache.add(url).catch(err =>
@@ -52,7 +51,6 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Ignorer les requêtes non-GET
   if (event.request.method !== 'GET') return;
 
   // API calls → network-first, jamais de cache
@@ -68,7 +66,7 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Mistral / ElevenLabs / CDN externes → network-only
+  // Mistral / CDN externes → network-only
   if (!url.hostname.includes(self.location.hostname) &&
       !url.pathname.startsWith('/icons/') &&
       !url.pathname.startsWith('/outputs/')) {
@@ -92,22 +90,19 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Assets statiques → cache-first avec fallback réseau
+  // Assets statiques → network-first pour toujours avoir la dernière version
   event.respondWith(
-    caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(response => {
-        if (response.ok) {
-          const clone = response.clone();
-          caches.open(CACHE_DYNAMIC).then(c => c.put(event.request, clone));
-        }
-        return response;
-      }).catch(() => {
-        // Fallback hors-ligne : retourner app.html pour les navigations
-        if (event.request.mode === 'navigate') {
-          return caches.match('/app.html');
-        }
-      });
-    })
+    fetch(event.request).then(response => {
+      if (response.ok) {
+        const clone = response.clone();
+        caches.open(CACHE_STATIC).then(c => c.put(event.request, clone));
+      }
+      return response;
+    }).catch(() =>
+      caches.match(event.request).then(cached => {
+        if (cached) return cached;
+        if (event.request.mode === 'navigate') return caches.match('/app.html');
+      })
+    )
   );
 });
