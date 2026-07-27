@@ -7,6 +7,7 @@ require('dotenv').config();
 
 const express        = require('express');
 const cors           = require('cors');
+const helmet         = require('helmet');
 const rateLimit      = require('express-rate-limit');
 const { Pool }       = require('pg');
 const jwt            = require('jsonwebtoken');
@@ -16,6 +17,19 @@ const { v4: uuidv4 } = require('uuid');
 const fs             = require('fs');
 const path           = require('path');
 const multer         = require('multer');
+
+// ── Vérification des secrets critiques au démarrage ─────────────
+// [FIX #2 - 27/07/2026] Plus AUCUN fallback en dur pour ADMIN_PASSWORD :
+// avant, `ADMIN_PASSWORD || 'devispro_admin_2026'` donnait un accès admin
+// avec un mot de passe public (visible dans le repo GitHub) si la variable
+// d'env était absente. Maintenant le serveur refuse de démarrer.
+const REQUIRED_ENV = ['JWT_SECRET', 'ADMIN_PASSWORD', 'DATABASE_URL', 'MISTRAL_API_KEY'];
+const missingEnv   = REQUIRED_ENV.filter(k => !process.env[k]);
+if (missingEnv.length > 0) {
+  console.error(`[BOOT] Variables d'environnement manquantes : ${missingEnv.join(', ')}`);
+  console.error('[BOOT] Arrêt du serveur — aucun fallback en dur pour les secrets.');
+  process.exit(1);
+}
 
 // ── App ────────────────────────────────────────────────────────
 const app         = express();
@@ -37,7 +51,29 @@ function makeShareCode() {
 }
 
 // ── Middleware ─────────────────────────────────────────────────
-app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
+// [FIX #6 - 27/07/2026] Helmet : en-têtes de sécurité HTTP (CSP, X-Frame-Options, etc.)
+// CSP désactivée car le frontend est servi séparément (Netlify) ; ce backend ne sert
+// que du JSON + PDF + la page /d/:code, donc pas de risque XSS lié à du HTML inline ici.
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// [FIX #5 - 27/07/2026] CORS fail-closed : avant, l'absence de FRONTEND_URL ouvrait
+// l'API à n'importe quelle origine ('*'). Maintenant, liste blanche explicite ;
+// FRONTEND_URL peut contenir plusieurs origines séparées par des virgules.
+const allowedOrigins = (process.env.FRONTEND_URL || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin: (origin, callback) => {
+    // Requêtes sans origine (Postman, curl, apps mobiles) : autorisées côté serveur,
+    // la vraie protection est le token JWT sur chaque route.
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origine non autorisée par CORS'));
+  }
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -48,6 +84,17 @@ const limiter = rateLimit({
   message: { error: 'Trop de requêtes, réessaie dans 15 minutes.' }
 });
 app.use('/api/', limiter);
+
+// [FIX #3 - 27/07/2026] Rate-limit dédié et strict pour les routes sensibles
+// (login artisan, login admin, activation par code) — indépendant du rate-limit
+// global de 100 req/15min qui laissait trop de marge pour du bruteforce.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  message: { error: 'Trop de tentatives. Réessaie dans 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 // ── PostgreSQL ─────────────────────────────────────────────────
 const pool = new Pool({
@@ -66,7 +113,27 @@ const storage = multer.diskStorage({
     cb(null, `${uuidv4()}${path.extname(file.originalname)}`);
   }
 });
-const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 } });
+// [FIX #4 - 27/07/2026] fileFilter ajouté : avant, n'importe quel type de fichier
+// pouvait être uploadé comme logo (script, HTML, exécutable déguisé). Maintenant,
+// seuls les types image courants sont acceptés.
+const ALLOWED_LOGO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const upload = multer({
+  storage,
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_LOGO_TYPES.includes(file.mimetype)) {
+      return cb(new Error('Type de fichier non autorisé (jpeg, png, webp uniquement)'));
+    }
+    cb(null, true);
+  }
+});
+
+// [FIX #4 - 27/07/2026] Route de service manquante : logo_url pointait vers
+// /uploads/... mais rien ne servait ce dossier — les logos ne s'affichaient jamais.
+// ⚠️ Le disque Render est éphémère (perdu à chaque redeploy/restart) : correct pour
+// débloquer la fonctionnalité tout de suite, mais un stockage externe (Cloudflare R2,
+// S3...) serait plus fiable à moyen terme si les logos doivent survivre aux déploiements.
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Auth middleware ────────────────────────────────────────────
 function authMiddleware(req, res, next) {
@@ -261,10 +328,14 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
 // ROUTES AUTH
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { nom, prenom, telephone, metier, password } = req.body;
   if (!nom || !telephone || !metier || !password) {
     return res.status(400).json({ error: 'Champs obligatoires manquants' });
+  }
+  // [FIX #10 - 27/07/2026] Longueur minimale imposée côté backend (rien n'était vérifié avant)
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
   }
   try {
     const hash   = await bcrypt.hash(password, 10);
@@ -286,7 +357,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { telephone, password } = req.body;
   try {
     const result  = await pool.query('SELECT * FROM artisans WHERE telephone = $1', [telephone]);
@@ -340,7 +411,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/activate', authMiddleware, async (req, res) => {
+app.post('/api/auth/activate', authLimiter, authMiddleware, async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'Code manquant' });
   try {
@@ -643,6 +714,22 @@ app.get('/api/devis/:id', authMiddleware, async (req, res) => {
 
 app.post('/api/bot/message', authMiddleware, async (req, res) => {
   const { message, history, devis_draft } = req.body;
+
+  // [FIX #7 - 27/07/2026] Avant, `history` était réinjecté tel quel dans l'appel
+  // Mistral — un artisan avec un plan payant (donc sans quota) pouvait fabriquer un
+  // historique avec des rôles arbitraires ou démesurément long pour détourner
+  // l'endpoint ou faire exploser la consommation de l'API Mistral.
+  if (!message || typeof message !== 'string' || message.length > 2000) {
+    return res.status(400).json({ error: 'Message invalide ou trop long (2000 caractères max)' });
+  }
+  if (history && !Array.isArray(history)) {
+    return res.status(400).json({ error: 'Historique invalide' });
+  }
+  const safeHistory = (history || []).slice(-20).filter(h =>
+    h && (h.role === 'user' || h.role === 'assistant') &&
+    typeof h.content === 'string' && h.content.length <= 2000
+  );
+
   try {
     const artisanResult = await pool.query(
       'SELECT nom, metier, plan, devis_count, statut FROM artisans WHERE id=$1', [req.user.id]
@@ -690,7 +777,7 @@ RÈGLES ABSOLUES :
 ${JSON.stringify(devis_draft || {}, null, 2)}`;
 
     const messages = [
-      ...(history || []).map(h => ({ role: h.role, content: h.content })),
+      ...safeHistory.map(h => ({ role: h.role, content: h.content })),
       { role: 'user', content: message }
     ];
 
@@ -780,10 +867,11 @@ IMPORTANT : JSON seulement, rien d'autre.`;
 // ROUTES ADMIN
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/admin/login', (req, res) => {
-  const { password }   = req.body;
-  const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'devispro_admin_2026';
-  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Mot de passe incorrect' });
+app.post('/api/admin/login', authLimiter, (req, res) => {
+  const { password } = req.body;
+  // [FIX #2 - 27/07/2026] Fallback en dur supprimé (ADMIN_PASSWORD est maintenant
+  // obligatoire au démarrage, voir vérification en haut du fichier)
+  if (password !== process.env.ADMIN_PASSWORD) return res.status(401).json({ error: 'Mot de passe incorrect' });
   const token = jwt.sign({ admin: true }, process.env.JWT_SECRET, { expiresIn: '8h' });
   res.json({ token });
 });
@@ -938,6 +1026,23 @@ app.delete('/api/admin/codes/:id', adminAuth, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ══════════════════════════════════════════════════════════════
-app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '4.5.0' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', app: 'DevisPro CI', version: '4.6.0' }));
 
-app.listen(PORT, () => console.log(`DevisPro CI backend v4.5 running on port ${PORT}`));
+// ══════════════════════════════════════════════════════════════
+// HANDLER D'ERREURS GÉNÉRIQUE (JSON)
+// ══════════════════════════════════════════════════════════════
+// [FIX #1 + #4 - 27/07/2026] Attrape les erreurs multer (upload malformé, type de
+// fichier refusé) et CORS pour renvoyer une réponse JSON propre au lieu de laisser
+// Express planter ou renvoyer une page HTML par défaut.
+app.use((err, req, res, next) => {
+  if (err && err.name === 'MulterError') {
+    return res.status(400).json({ error: `Erreur upload : ${err.message}` });
+  }
+  if (err && err.message === 'Origine non autorisée par CORS') {
+    return res.status(403).json({ error: 'Origine non autorisée' });
+  }
+  console.error('[UNHANDLED]', err);
+  res.status(500).json({ error: 'Erreur serveur' });
+});
+
+app.listen(PORT, () => console.log(`DevisPro CI backend v4.6 running on port ${PORT}`));
