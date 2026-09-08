@@ -371,12 +371,12 @@ function buildDevisPDF({ artisan, numero, client_nom, client_telephone, objet, t
 
     totaux.forEach(([label, val]) => {
       const isTotal = label === 'TOTAL TTC';
-      if (isTotal) doc.rect(360, y - 2, pageW - 310, 22).fill(BLUE);
+      if (isTotal) doc.rect(325, y - 2, 220, 22).fill(BLUE);
       doc.fillColor(isTotal ? WHITE : DARK)
          .font(isTotal ? 'Helvetica-Bold' : 'Helvetica')
          .fontSize(isTotal ? 11 : 9)
-         .text(label, 365, y + (isTotal ? 5 : 2), { width: 120 })
-         .text(`${fcfa(val)} FCFA`, 490, y + (isTotal ? 5 : 2), { width: 50, align: 'right' });
+         .text(label, 330, y + (isTotal ? 5 : 2), { width: 135 })
+         .text(`${fcfa(val)} FCFA`, 465, y + (isTotal ? 5 : 2), { width: 80, align: 'right' });
       y += isTotal ? 24 : 18;
     });
 
