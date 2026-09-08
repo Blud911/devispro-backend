@@ -11,8 +11,15 @@ const Api = {
     const headers = { 'Content-Type': 'application/json' };
     if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     const res  = await fetch(`${API_BASE}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Erreur réseau');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // On garde le code HTTP sur l'erreur : certaines vues (ex. envoi email non
+      // configuré → 503) doivent réagir différemment selon le statut.
+      const err = new Error(data.error || 'Erreur réseau');
+      err.status = res.status;
+      err.data   = data;
+      throw err;
+    }
     return data;
   },
 
@@ -48,6 +55,9 @@ const Api = {
 
   // ✅ v4.3 : génère un lien de partage public 7j pour WhatsApp
   shareDevis(devisId) { return this.request('POST', `/api/devis/${devisId}/share`); },
+
+  // Envoi manuel du PDF du devis au client par email (Brevo, côté backend)
+  envoyerDevisParEmail(devisId) { return this.request('POST', `/api/devis/${devisId}/envoyer-email`); },
 
   searchTarifs(q) { return this.request('GET', `/api/tarifs?q=${encodeURIComponent(q)}`); },
 };

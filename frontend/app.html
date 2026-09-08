@@ -119,6 +119,24 @@
     .screen-back  { color:rgba(255,255,255,0.5); font-size:13px; cursor:pointer; text-decoration:underline; margin-top:16px; }
     .screen-toggle { color:rgba(255,255,255,0.6); font-size:13px; text-align:center; margin-top:12px; cursor:pointer; }
     .screen-toggle span { color:var(--gold-light); font-weight:600; }
+
+    /* ── ÉCRANS ONGLETS (Devis / Profil) ── */
+    #screen-devis, #screen-profil { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; }
+    .devis-empty { text-align:center; color:var(--gray); font-size:14px; padding:48px 16px; }
+    .devis-badge { display:inline-block; padding:3px 10px; border-radius:12px; font-size:11px; font-weight:700; background:rgba(255,255,255,0.18); color:var(--white); text-transform:capitalize; }
+    .devis-card-date { font-size:11px; opacity:0.6; margin-top:2px; }
+
+    .profil-card { background:var(--white); border-radius:var(--radius); padding:16px; box-shadow:0 1px 4px rgba(0,0,0,0.1); display:flex; flex-direction:column; gap:8px; }
+    .profil-card-title { font-weight:700; font-size:13px; text-transform:uppercase; color:var(--gray); margin-bottom:4px; }
+    .profil-label { font-size:12px; font-weight:600; color:var(--gray); margin-top:6px; }
+    #screen-profil .screen-input { background:var(--bg); border:1.5px solid #CBD5E0; color:var(--dark); }
+    #screen-profil .screen-input::placeholder { color:var(--gray); }
+    .profil-readonly { padding:14px 16px; border-radius:12px; background:#EDF2F7; color:var(--gray); font-size:15px; }
+    .profil-row { display:flex; justify-content:space-between; gap:12px; font-size:14px; color:var(--dark); }
+    .profil-row span:last-child { font-weight:700; text-align:right; }
+    .profil-msg { text-align:center; font-size:13px; font-weight:600; color:#2F855A; }
+    .profil-logout-btn { width:100%; padding:14px; border-radius:12px; border:1.5px solid #E53E3E; background:var(--white); color:#E53E3E; font-size:15px; font-weight:700; cursor:pointer; }
+    .profil-logout-btn:active { background:#FFF5F5; }
   </style>
 </head>
 <body>
@@ -167,7 +185,7 @@
       <div class="header-name">DevisPro CI</div>
       <div class="header-sub" id="header-sub">Prêt à créer un devis</div>
     </div>
-    <button class="header-btn" onclick="newDevis()">+ Nouveau</button>
+    <button class="header-btn" id="header-new-btn" onclick="newDevis()">+ Nouveau</button>
   </header>
 
   <div id="quota-banner"></div>
@@ -190,6 +208,39 @@
     <textarea id="msg-input" rows="1" placeholder="Tape, parle ou prends une photo..."
               onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
     <button id="send-btn" onclick="sendMessage()">➤</button>
+  </div>
+
+  <!-- ONGLET DEVIS -->
+  <div id="screen-devis" style="display:none;">
+    <div id="devis-list"></div>
+    <div id="devis-empty" class="devis-empty" style="display:none;">Aucun devis pour l'instant</div>
+  </div>
+
+  <!-- ONGLET PROFIL -->
+  <div id="screen-profil" style="display:none;">
+    <div class="profil-card">
+      <label class="profil-label" for="profil-nom">Nom</label>
+      <input class="screen-input" id="profil-nom" type="text" placeholder="Ton nom complet">
+
+      <label class="profil-label" for="profil-metier">Métier</label>
+      <input class="screen-input" id="profil-metier" type="text" placeholder="Ton métier (ex: Carreleur)">
+
+      <label class="profil-label">Téléphone</label>
+      <div class="profil-readonly" id="profil-telephone">—</div>
+    </div>
+
+    <div class="profil-card">
+      <div class="profil-card-title">Mon abonnement</div>
+      <div class="profil-row"><span>Plan</span><span id="profil-plan">—</span></div>
+      <div class="profil-row"><span>Statut</span><span id="profil-statut">—</span></div>
+      <div class="profil-row" id="profil-quota-row" style="display:none;"><span>Devis utilisés</span><span id="profil-quota">—</span></div>
+      <div class="profil-row" id="profil-expires-row" style="display:none;"><span>Expire le</span><span id="profil-expires">—</span></div>
+    </div>
+
+    <div id="profil-msg" class="profil-msg" style="display:none;"></div>
+
+    <button class="screen-btn" id="profil-save-btn" onclick="saveProfil()">Enregistrer les modifications</button>
+    <button class="profil-logout-btn" onclick="logout()">Se déconnecter</button>
   </div>
 
   <nav id="nav" class="visible">

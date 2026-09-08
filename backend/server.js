@@ -993,12 +993,14 @@ RÈGLES ABSOLUES :
 - UNE question par réponse
 - PAS de markdown : pas de **, pas de ###, pas de tirets — texte brut uniquement
 - L'email du client est FACULTATIF : si l'artisan dit "non" / "pas d'email" / laisse vide, mets client_email à null et continue normalement
+- Ne saute JAMAIS l'étape 3 (demande de l'email du client) même si la conversation part sur un autre sujet ou si l'artisan répond de façon inattendue — reviens-y avant de passer à l'étape suivante si elle n'a pas encore été posée.
 
 MÉMOIRE DU DEVIS (OBLIGATOIRE À CHAQUE QUESTION) :
 - TANT QUE le devis n'est pas confirmé et finalisé — c'est-à-dire à chaque fois que tu poses une question, et JAMAIS sur la réponse finale create_devis — termine ta réponse par un bloc cumulatif, seul sur une nouvelle ligne, au format EXACT (une seule ligne, aucun espace ni retour à l'intérieur) :
 <<<DRAFT>>>{"client_nom":"...ou null","client_telephone":"...ou null","client_email":"...ou null","type_travaux":"...ou null","lignes":[{"designation":"...","quantite":0,"unite":"...","prix_unitaire":0}],"main_oeuvre":0,"acompte":0}<<<END>>>
 - Ce bloc doit refléter la TOTALITÉ de ce qui est déjà connu du devis à ce stade de la conversation, pas seulement la dernière réponse de l'artisan. Mets null pour chaque champ texte non encore renseigné, [] pour "lignes" tant qu'aucune fourniture n'a été notée, 0 pour "main_oeuvre" et "acompte" non encore renseignés.
 - Le contenu de ce bloc est repris TEL QUEL, plus bas dans ce prompt, sous "ÉTAT ACTUEL DU DEVIS". Pars TOUJOURS de cet état déjà connu et complète-le avec la nouvelle information : ne repars jamais de zéro, ne perds jamais une donnée (nom, téléphone, fourniture déjà notée...) déjà présente dans "ÉTAT ACTUEL DU DEVIS".
+- Ne remets JAMAIS à null un champ qui a déjà une valeur connue dans "ÉTAT ACTUEL DU DEVIS", même si la conversation dévie du WORKFLOW prévu (ex : l'artisan enchaîne directement sur le type de travaux ou les fournitures) — recopie systématiquement les valeurs déjà connues.
 - L'artisan ne voit jamais ce bloc (il est retiré automatiquement avant l'affichage). N'y fais aucune référence dans ta phrase.
 - Ce bloc n'apparaît QUE sur les questions. Sur la réponse finale, ta réponse est UNIQUEMENT le JSON create_devis, rien d'autre (ni bloc <<<DRAFT>>>, ni texte autour).
 

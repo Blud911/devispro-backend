@@ -22,7 +22,35 @@ const Bot = {
 
     try {
       const res = await Api.botMessage(userMessage, this.history, this.devis_draft);
-      const { reply, action } = res;
+      const { reply, action, draft } = res;
+
+      // ── Mémoire structurée du devis ──────────────────────────
+      // À chaque tour (hors réponse finale), l'IA renvoie dans res.draft
+      // l'état CUMULÉ complet du devis. En théorie on pourrait l'écraser tel
+      // quel ; en pratique le LLM oublie parfois une donnée DÉJÀ connue au
+      // milieu d'une conversation qui dévie du WORKFLOW du prompt (observé en
+      // test réel sur un scénario mécanique où le bot a improvisé au-delà du
+      // script : client_nom / client_telephone / type_travaux remis à null en
+      // plein milieu, bloc <<<DRAFT>>> pourtant syntaxiquement valide → la
+      // création du devis échouait côté backend avec "Données incomplètes").
+      //
+      // Filet de sécurité qui NE dépend PAS de la fiabilité du LLM à suivre
+      // l'instruction textuelle du prompt : pour les 4 champs SCALAIRES qui,
+      // une fois connus, ne redeviennent jamais vides normalement, on refuse
+      // un retour à vide/null/falsy si l'ancien devis_draft avait déjà une
+      // valeur non vide — on conserve alors l'ANCIENNE. Les champs qui
+      // évoluent légitimement au fil de la conversation (lignes, main_oeuvre,
+      // acompte) gardent l'écrasement complet : si l'artisan corrige, on suit
+      // le nouveau draft même quand la valeur "revient en arrière".
+      if (draft && typeof draft === 'object' && !Array.isArray(draft)) {
+        const CHAMPS_PROTEGES = ['client_nom', 'client_telephone', 'client_email', 'type_travaux'];
+        const ancien   = this.devis_draft || {};
+        const fusionne = { ...draft };
+        for (const champ of CHAMPS_PROTEGES) {
+          if (!fusionne[champ] && ancien[champ]) fusionne[champ] = ancien[champ];
+        }
+        this.devis_draft = fusionne;
+      }
 
       this.history.push({ role: 'assistant', content: reply });
       this._updateDraft(userMessage, reply);
@@ -118,6 +146,9 @@ const Bot = {
     }
     if (lower.includes('contact') || lower.includes('téléphone du client')) {
       return ['Pas de numéro'];
+    }
+    if (lower.includes('email du client') || lower.includes("l'email du client")) {
+      return ["Pas d'email"];
     }
     return [];
   }

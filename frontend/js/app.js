@@ -107,6 +107,13 @@ function showApp(artisan) {
   document.getElementById('app').style.display               = 'flex';
   document.getElementById('header-sub').textContent = `Bonjour, ${artisan.nom} 👋`;
   if (artisan.plan === 'gratuit') showQuotaBanner(Math.max(0, 3 - (artisan.devis_count || 0)));
+
+  // Analyse photo réservée aux métiers bâtiment/surface : le backend renvoie
+  // photo_disponible === false pour les autres (mécanique auto, électroménager…).
+  // On masque le bouton 📷 dans ce cas, on l'affiche normalement sinon.
+  const cameraBtn = document.getElementById('camera-btn');
+  if (cameraBtn) cameraBtn.style.display = artisan.photo_disponible === false ? 'none' : '';
+
   startBotGreeting(artisan);
 }
 
@@ -147,6 +154,15 @@ function appendMessage(role, text, extra) {
   bubble.className = 'msg-bubble';
 
   if (extra && extra.type === 'devis-card') {
+    // Bouton "Envoyer par mail" affiché UNIQUEMENT si le devis a un email client.
+    const email       = (extra.email || '').trim();
+    const hasEmail    = email.includes('@');
+    const emailRow    = hasEmail
+      ? `<div class="devis-card-actions">
+          <button class="card-btn secondary" style="flex:1"
+                  onclick="envoyerParMail('${extra.devis_id}', '${email}', this)">📧 Envoyer par mail</button>
+        </div>`
+      : '';
     bubble.innerHTML = `
       <div class="devis-card">
         <div class="devis-card-title">Devis généré</div>
@@ -156,6 +172,7 @@ function appendMessage(role, text, extra) {
           <button class="card-btn primary"   onclick="voirPDF('${extra.devis_id}')">📄 Voir PDF</button>
           <button class="card-btn secondary" onclick="partagerWhatsApp('${extra.devis_id}', '${extra.phone}', '${extra.total}', '${extra.client}')">💬 WhatsApp</button>
         </div>
+        ${emailRow}
       </div>`;
   } else {
     // ✅ v4.3 : texte nettoyé du markdown
@@ -213,6 +230,26 @@ async function partagerWhatsApp(devisId, phone, total, clientNom) {
     window.open(`https://wa.me/${numero}?text=${texte}`, '_blank');
   } catch (err) {
     alert("Impossible de générer le lien de partage. Réessaie.");
+  }
+}
+
+// ── ENVOI DU DEVIS PAR EMAIL (Brevo, côté backend) ────────────
+async function envoyerParMail(devisId, email, btn) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Envoi en cours...'; }
+  try {
+    await Api.envoyerDevisParEmail(devisId);
+    if (btn) btn.textContent = '✅ Envoyé';
+    appendMessage('bot', `Devis envoyé à ${email}`);
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = label || '📧 Envoyer par mail'; }
+    if (err.status === 503) {
+      appendMessage('bot', "L'envoi par email n'est pas encore activé sur ton compte. Utilise le partage WhatsApp en attendant, ou contacte l'administrateur.");
+    } else if (err.status === 400) {
+      appendMessage('bot', "Ce devis n'a pas d'adresse email client : impossible de l'envoyer par mail.");
+    } else {
+      appendMessage('bot', `L'envoi de l'email a échoué : ${err.message}`);
+    }
   }
 }
 
@@ -301,7 +338,9 @@ async function sendMessage() {
           client:   finalAction.client_nom,
           numero:   res.numero,
           devis_id: res.id,
-          phone:    finalAction.client_telephone || ''
+          phone:    finalAction.client_telephone || '',
+          // Le backend renvoie l'email retenu (null si absent / invalide).
+          email:    res.client_email || finalAction.client_email || ''
         });
         setProgress(100);
       } catch (err) { appendMessage('bot', `Erreur : ${err.message}`); }
@@ -313,7 +352,186 @@ async function sendMessage() {
   finally  { document.getElementById('send-btn').disabled = false; }
 }
 
+// ── NAVIGATION ONGLETS ────────────────────────────────────────
+// showTab colore le bouton actif ET bascule la visibilité des écrans.
+// Onglet "chat" : on montre le flow bot habituel (chat, quick-replies,
+// voice-confirm, input-zone, quota-banner, progress-bar) + le bouton
+// "+ Nouveau" du header. Onglets "devis"/"profil" : on masque tout ça et
+// on affiche l'écran dédié.
+const CHAT_ELS = ['chat', 'quick-replies', 'voice-confirm', 'input-zone', 'quota-banner', 'progress-bar'];
+
 function showTab(tab) {
   currentTab = tab;
   document.querySelectorAll('.nav-item').forEach((el, i) => el.classList.toggle('active', ['chat', 'devis', 'profil'][i] === tab));
+
+  const isChat = tab === 'chat';
+
+  // '' = on retire l'override inline → l'élément retrouve son display CSS/JS
+  // d'origine (le flow chat continue de marcher exactement comme avant).
+  CHAT_ELS.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = isChat ? '' : 'none'; });
+
+  const screenDevis  = document.getElementById('screen-devis');
+  const screenProfil = document.getElementById('screen-profil');
+  if (screenDevis)  screenDevis.style.display  = tab === 'devis'  ? 'flex' : 'none';
+  if (screenProfil) screenProfil.style.display = tab === 'profil' ? 'flex' : 'none';
+
+  const newBtn = document.getElementById('header-new-btn');
+  if (newBtn) newBtn.style.display = isChat ? '' : 'none';
+
+  if (isChat) {
+    // Le quota-banner n'a un contenu que si on le régénère : on ré-évalue
+    // depuis l'artisan stocké (même logique que showApp).
+    const stored = localStorage.getItem('dp_artisan');
+    if (stored) {
+      const a = JSON.parse(stored);
+      if (a.plan === 'gratuit') showQuotaBanner(Math.max(0, 3 - (a.devis_count || 0)));
+    }
+  }
+
+  if (tab === 'devis')  loadDevisScreen();
+  if (tab === 'profil') loadProfilScreen();
+}
+
+// ── HELPERS ───────────────────────────────────────────────────
+function formatDateFr(value) {
+  if (!value) return '';
+  const dt = new Date(value);
+  if (isNaN(dt.getTime())) return '';
+  return dt.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// ── ÉCRAN DEVIS ───────────────────────────────────────────────
+// Rend la liste des devis avec la même carte que celle affichée après
+// création dans le chat, et réutilise les actions existantes
+// (voirPDF / partagerWhatsApp / envoyerParMail).
+async function loadDevisScreen() {
+  const list  = document.getElementById('devis-list');
+  const empty = document.getElementById('devis-empty');
+  if (!list || !empty) return;
+  list.innerHTML = '';
+  empty.textContent   = "Aucun devis pour l'instant";
+  empty.style.display = 'none';
+
+  try {
+    const devis = await Api.listDevis();
+    if (!Array.isArray(devis) || devis.length === 0) {
+      empty.style.display = 'block';
+      return;
+    }
+    devis.forEach(d => {
+      const email    = (d.client_email || '').trim();
+      const hasEmail = email.includes('@');
+      const phone    = (d.client_telephone || '').replace(/'/g, '');
+      const client   = (d.client_nom || '').replace(/'/g, '');
+
+      const card = document.createElement('div');
+      card.className = 'devis-card';
+      card.innerHTML = `
+        <div class="devis-card-title">${d.numero || 'Devis'}</div>
+        <div class="devis-card-total">${Number(d.total || 0).toLocaleString('fr-FR')} FCFA</div>
+        <div class="devis-card-sub">${d.client_nom || ''}</div>
+        <div class="devis-card-date">${formatDateFr(d.created_at)}</div>
+        <div style="margin-top:8px;"><span class="devis-badge">${d.statut || '—'}</span></div>
+        <div class="devis-card-actions">
+          <button class="card-btn primary"   onclick="voirPDF('${d.id}')">📄 Voir PDF</button>
+          <button class="card-btn secondary" onclick="partagerWhatsApp('${d.id}', '${phone}', '${d.total}', '${client}')">💬 WhatsApp</button>
+        </div>
+        ${hasEmail ? `<div class="devis-card-actions">
+          <button class="card-btn secondary" style="flex:1"
+                  onclick="envoyerParMail('${d.id}', '${email}', this)">📧 Envoyer par mail</button>
+        </div>` : ''}`;
+      list.appendChild(card);
+    });
+  } catch (err) {
+    empty.textContent   = "Impossible de charger les devis. Réessaie.";
+    empty.style.display = 'block';
+  }
+}
+
+// ── ÉCRAN PROFIL ──────────────────────────────────────────────
+async function loadProfilScreen() {
+  const msg = document.getElementById('profil-msg');
+  if (msg) msg.style.display = 'none';
+
+  try {
+    const p = await Api.getProfil();
+    document.getElementById('profil-nom').value             = p.nom    || '';
+    document.getElementById('profil-metier').value          = p.metier || '';
+    document.getElementById('profil-telephone').textContent = p.telephone || '—';
+    document.getElementById('profil-plan').textContent      = p.plan   || '—';
+    document.getElementById('profil-statut').textContent    = p.statut || '—';
+
+    const quotaRow = document.getElementById('profil-quota-row');
+    if (p.plan === 'gratuit') {
+      quotaRow.style.display = 'flex';
+      document.getElementById('profil-quota').textContent = `${p.devis_count || 0}/3 devis utilisés`;
+    } else {
+      quotaRow.style.display = 'none';
+    }
+
+    const expRow = document.getElementById('profil-expires-row');
+    if (p.expires_at) {
+      expRow.style.display = 'flex';
+      document.getElementById('profil-expires').textContent = formatDateFr(p.expires_at);
+    } else {
+      expRow.style.display = 'none';
+    }
+  } catch (err) {
+    if (msg) {
+      msg.textContent   = 'Impossible de charger le profil. Réessaie.';
+      msg.style.color   = '#C53030';
+      msg.style.display = 'block';
+    }
+  }
+}
+
+async function saveProfil() {
+  const btn    = document.getElementById('profil-save-btn');
+  const msg    = document.getElementById('profil-msg');
+  const nom    = document.getElementById('profil-nom').value.trim();
+  const metier = document.getElementById('profil-metier').value.trim();
+  if (!nom || !metier) { alert('Le nom et le métier sont obligatoires'); return; }
+
+  const label = btn.textContent;
+  btn.disabled = true; btn.textContent = '...';
+  msg.style.display = 'none';
+
+  try {
+    await Api.updateProfil({ nom, metier });
+
+    // Plutôt que de recalculer isMetierEligiblePhoto côté client, on relit le
+    // profil : le backend renvoie photo_disponible à jour selon le métier.
+    const p = await Api.getProfil();
+
+    const stored = localStorage.getItem('dp_artisan');
+    if (stored) {
+      const a = JSON.parse(stored);
+      a.nom              = p.nom;
+      a.metier           = p.metier;
+      a.photo_disponible = p.photo_disponible;
+      localStorage.setItem('dp_artisan', JSON.stringify(a));
+    }
+
+    document.getElementById('header-sub').textContent = `Bonjour, ${p.nom} 👋`;
+
+    // Même logique d'affichage du bouton photo que dans showApp().
+    const cameraBtn = document.getElementById('camera-btn');
+    if (cameraBtn) cameraBtn.style.display = p.photo_disponible === false ? 'none' : '';
+
+    msg.textContent   = '✅ Modifications enregistrées';
+    msg.style.color   = '#2F855A';
+    msg.style.display = 'block';
+  } catch (err) {
+    msg.textContent   = `Échec de l'enregistrement : ${err.message}`;
+    msg.style.color   = '#C53030';
+    msg.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+function logout() {
+  if (!confirm('Se déconnecter de DevisPro CI ?')) return;
+  Api.clearToken();
+  window.location.reload();
 }
