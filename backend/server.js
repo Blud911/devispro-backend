@@ -410,7 +410,7 @@ async function generatePDF({ res, ...data }) {
 // ══════════════════════════════════════════════════════════════
 
 app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const { nom, prenom, telephone, metier, password } = req.body;
+  const { nom, prenom, telephone, metier, password, email } = req.body;
   if (!nom || !telephone || !metier || !password) {
     return res.status(400).json({ error: 'Champs obligatoires manquants' });
   }
@@ -418,12 +418,16 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   if (password.length < 8) {
     return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 8 caractères' });
   }
+  // Email de contact de l'artisan : facultatif, jamais bloquant. On réutilise
+  // normalizeEmail() (même fonction que pour client_email sur un devis) : une
+  // valeur absente / vide / invalide devient null, sans erreur.
+  const artisanEmail = normalizeEmail(email);
   try {
     const hash   = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      `INSERT INTO artisans (id, nom, prenom, telephone, metier, password_hash, devis_count, statut, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,0,'en_attente',NOW()) RETURNING id`,
-      [uuidv4(), nom, prenom || '', telephone, metier, hash]
+      `INSERT INTO artisans (id, nom, prenom, telephone, metier, email, password_hash, devis_count, statut, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,0,'en_attente',NOW()) RETURNING id`,
+      [uuidv4(), nom, prenom || '', telephone, metier, artisanEmail, hash]
     );
     const tempToken = jwt.sign({ id: result.rows[0].id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({
@@ -484,6 +488,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         devis_count:      artisan.devis_count,
         statut:           artisan.statut,
         expires_at:       artisan.expires_at,
+        email:            artisan.email,
         photo_disponible: isMetierEligiblePhoto(artisan.metier)
       }
     });
@@ -538,7 +543,7 @@ app.post('/api/auth/activate', authLimiter, authMiddleware, async (req, res) => 
 app.get('/api/profil', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier, logo_url, devis_count, plan, statut, expires_at FROM artisans WHERE id=$1',
+      'SELECT id, nom, prenom, telephone, metier, email, logo_url, devis_count, plan, statut, expires_at FROM artisans WHERE id=$1',
       [req.user.id]
     );
     const artisan = result.rows[0];
@@ -550,13 +555,16 @@ app.get('/api/profil', authMiddleware, async (req, res) => {
 app.put('/api/profil', authMiddleware, async (req, res) => {
   // Mise à jour partielle : on ne touche QUE les colonnes réellement présentes
   // dans req.body. Un appel { nom, metier } ne modifie jamais telephone/prenom.
-  const CHAMPS_AUTORISES = ['nom', 'prenom', 'telephone', 'metier'];
+  // `email` (contact artisan, facultatif) passe par normalizeEmail() : une
+  // valeur invalide devient null, jamais une erreur.
+  const CHAMPS_AUTORISES = ['nom', 'prenom', 'telephone', 'metier', 'email'];
   const colonnes = [];
   const valeurs  = [];
 
   for (const champ of CHAMPS_AUTORISES) {
     if (Object.prototype.hasOwnProperty.call(req.body, champ)) {
-      valeurs.push(req.body[champ]);
+      const valeur = champ === 'email' ? normalizeEmail(req.body.email) : req.body[champ];
+      valeurs.push(valeur);
       colonnes.push(`${champ}=$${valeurs.length}`);
     }
   }

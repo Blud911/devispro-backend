@@ -56,8 +56,9 @@ async function submitAuth() {
     } else {
       const nom    = document.getElementById('auth-nom').value.trim();
       const metier = document.getElementById('auth-metier').value.trim();
+      const email  = document.getElementById('auth-email').value.trim();
       if (!nom || !metier) { alert('Remplis ton nom et ton métier'); return; }
-      const res = await Api.register(nom, tel, metier, pass);
+      const res = await Api.register(nom, tel, metier, pass, email);
       if (res.token) Api.setToken(res.token);
       showPendingScreen();
     }

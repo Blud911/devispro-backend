@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS artisans (
   prenom         VARCHAR(100),
   telephone      VARCHAR(20) UNIQUE NOT NULL,
   metier         VARCHAR(100) NOT NULL,
+  email          VARCHAR(150),           -- facultatif : contact de l'artisan (pas d'unicité, pas de vérification)
   password_hash  TEXT NOT NULL,
   logo_url       TEXT,
   plan           VARCHAR(20) DEFAULT 'gratuit',  -- gratuit | starter | pro
@@ -59,3 +60,4 @@ CREATE INDEX IF NOT EXISTS idx_tarifs_usage     ON tarifs(usage_count DESC);
 -- Idempotent : sûr à rejouer à chaque déploiement.
 -- ══════════════════════════════════════════════════════════════
 ALTER TABLE devis ADD COLUMN IF NOT EXISTS client_email VARCHAR(150);
+ALTER TABLE artisans ADD COLUMN IF NOT EXISTS email VARCHAR(150);
