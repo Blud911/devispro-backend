@@ -137,6 +137,13 @@
     .profil-msg { text-align:center; font-size:13px; font-weight:600; color:#2F855A; }
     .profil-logout-btn { width:100%; padding:14px; border-radius:12px; border:1.5px solid #E53E3E; background:var(--white); color:#E53E3E; font-size:15px; font-weight:700; cursor:pointer; }
     .profil-logout-btn:active { background:#FFF5F5; }
+
+    /* ── ÉCRAN CONFIRMATION DEVIS (avant insertion en base) ── */
+    #confirm-devis { display:none; flex-shrink:0; padding:12px 16px; max-height:64vh; overflow-y:auto; background:var(--bg); border-top:2px solid var(--gold); }
+    .confirm-label { display:block; font-size:10px; font-weight:700; letter-spacing:0.5px; text-transform:uppercase; opacity:0.7; margin:10px 0 4px; }
+    .confirm-label:first-of-type { margin-top:2px; }
+    #confirm-devis .screen-input { margin:0; }
+    .confirm-recap { font-size:12px; line-height:1.7; margin-top:14px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.25); white-space:pre-wrap; }
   </style>
 </head>
 <body>
@@ -199,6 +206,32 @@
     <div class="vc-btns">
       <button class="vc-btn yes" onclick="confirmVoice(true)">✅ Oui, envoyer</button>
       <button class="vc-btn no"  onclick="confirmVoice(false)">🔄 Non, recommencer</button>
+    </div>
+  </div>
+
+  <!-- CONFIRMATION / ÉDITION DU DEVIS AVANT INSERTION (Piste 2) -->
+  <div id="confirm-devis">
+    <div class="devis-card">
+      <div class="devis-card-title">Vérifie le devis avant de créer</div>
+
+      <label class="confirm-label" for="confirm-nom">Nom du client</label>
+      <input class="screen-input" id="confirm-nom" type="text" placeholder="Nom du client">
+
+      <label class="confirm-label" for="confirm-tel">Téléphone</label>
+      <input class="screen-input" id="confirm-tel" type="tel" placeholder="Téléphone (facultatif)">
+
+      <label class="confirm-label" for="confirm-email">Email</label>
+      <input class="screen-input" id="confirm-email" type="email" placeholder="Email (facultatif)">
+
+      <label class="confirm-label" for="confirm-type">Type de travaux</label>
+      <input class="screen-input" id="confirm-type" type="text" placeholder="Type de travaux">
+
+      <div class="confirm-recap" id="confirm-recap"></div>
+
+      <div class="devis-card-actions">
+        <button class="card-btn primary"   onclick="confirmerCreationDevis()">Confirmer et créer le devis</button>
+        <button class="card-btn secondary" onclick="annulerConfirmationDevis()">Annuler</button>
+      </div>
     </div>
   </div>
 

@@ -322,28 +322,11 @@ async function sendMessage() {
       appendMessage('bot', reply); setQuickReplies(['Contacter via WhatsApp']); return;
     }
     if (finalAction) {
-      try {
-        const res = await Api.createDevis(finalAction);
-        const stored = localStorage.getItem('dp_artisan');
-        if (stored) {
-          const a = JSON.parse(stored);
-          a.devis_count = (a.devis_count || 0) + 1;
-          localStorage.setItem('dp_artisan', JSON.stringify(a));
-          if (a.plan === 'gratuit') showQuotaBanner(Math.max(0, 3 - a.devis_count));
-        }
-        appendMessage('bot', reply);
-        appendMessage('bot', '', {
-          type:     'devis-card',
-          total:    res.total,
-          client:   finalAction.client_nom,
-          numero:   res.numero,
-          devis_id: res.id,
-          phone:    finalAction.client_telephone || '',
-          // Le backend renvoie l'email retenu (null si absent / invalide).
-          email:    res.client_email || finalAction.client_email || ''
-        });
-        setProgress(100);
-      } catch (err) { appendMessage('bot', `Erreur : ${err.message}`); }
+      // Piste 2 : on n'insère plus directement. L'artisan voit d'abord un
+      // écran de confirmation/édition (4 champs scalaires + récap fournitures/
+      // totaux) et valide — filet indépendant de la fiabilité du modèle.
+      appendMessage('bot', reply);
+      showConfirmationDevis(finalAction);
     } else {
       appendMessage('bot', reply);
       if (quickReplies && quickReplies.length) setQuickReplies(quickReplies);
@@ -352,13 +335,115 @@ async function sendMessage() {
   finally  { document.getElementById('send-btn').disabled = false; }
 }
 
+// ── CONFIRMATION / ÉDITION DU DEVIS AVANT INSERTION (Piste 2) ─
+// Le backend assemble désormais l'action create_devis depuis SON état
+// (devis_draft) au lieu de laisser l'IA la reproduire. On n'insère toujours
+// pas directement : l'artisan relit/corrige les 4 champs scalaires + voit le
+// récap fournitures/totaux (lecture seule), puis confirme. Ce filet est
+// indépendant du modèle : quelle que soit la dérive de l'IA, rien de faux ne
+// part en base sans relecture.
+let pendingFinalAction = null;
+
+function showConfirmationDevis(finalAction) {
+  pendingFinalAction = finalAction;
+
+  document.getElementById('confirm-nom').value   = finalAction.client_nom       || '';
+  document.getElementById('confirm-tel').value   = finalAction.client_telephone || '';
+  document.getElementById('confirm-email').value = finalAction.client_email     || '';
+  document.getElementById('confirm-type').value  = finalAction.type_travaux     || '';
+
+  const fmt       = n => Number(n || 0).toLocaleString('fr-FR');
+  const lignes    = Array.isArray(finalAction.lignes) ? finalAction.lignes : [];
+  let   total     = 0;
+  const lignesTxt = lignes.map(l => {
+    const st = Number(l.quantite || 0) * Number(l.prix_unitaire || 0);
+    total += st;
+    return `• ${l.designation || '—'} : ${fmt(l.quantite)} × ${fmt(l.prix_unitaire)} = ${fmt(st)} FCFA`;
+  }).join('\n');
+  const mo      = Number(finalAction.main_oeuvre || 0);
+  const acompte = Number(finalAction.acompte || 0);
+  total += mo;
+
+  document.getElementById('confirm-recap').textContent =
+    `${lignesTxt || 'Aucune fourniture'}\n` +
+    `Main-d'œuvre : ${fmt(mo)} FCFA\n` +
+    (acompte > 0 ? `Acompte : ${fmt(acompte)} FCFA\n` : '') +
+    `TOTAL : ${fmt(total)} FCFA`;
+
+  document.getElementById('confirm-devis').style.display = 'block';
+  const iz = document.getElementById('input-zone');    if (iz) iz.style.display = 'none';
+  const qr = document.getElementById('quick-replies'); if (qr) qr.style.display = 'none';
+  document.getElementById('confirm-devis').scrollIntoView({ block: 'end' });
+}
+
+function annulerConfirmationDevis() {
+  pendingFinalAction = null;
+  document.getElementById('confirm-devis').style.display = 'none';
+  const iz = document.getElementById('input-zone');    if (iz) iz.style.display = '';
+  const qr = document.getElementById('quick-replies'); if (qr) qr.style.display = '';
+  document.getElementById('msg-input').focus();
+}
+
+async function confirmerCreationDevis() {
+  if (!pendingFinalAction) return;
+  const btn = document.querySelector('#confirm-devis .card-btn.primary');
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+
+  // Les valeurs (éventuellement corrigées) des 4 champs éditables écrasent
+  // celles de finalAction ; lignes / main_oeuvre / acompte restent inchangés.
+  const payload = {
+    ...pendingFinalAction,
+    client_nom:       document.getElementById('confirm-nom').value.trim(),
+    client_telephone: document.getElementById('confirm-tel').value.trim()   || null,
+    client_email:     document.getElementById('confirm-email').value.trim() || null,
+    type_travaux:     document.getElementById('confirm-type').value.trim()  || null
+  };
+
+  pendingFinalAction = null;
+  document.getElementById('confirm-devis').style.display = 'none';
+  const iz = document.getElementById('input-zone');    if (iz) iz.style.display = '';
+  const qr = document.getElementById('quick-replies'); if (qr) qr.style.display = '';
+
+  await creerDevisEtAfficher(payload);
+
+  if (btn) { btn.disabled = false; btn.textContent = 'Confirmer et créer le devis'; }
+}
+
+// Suite identique à l'ancien comportement de sendMessage() après finalAction :
+// insertion en base + maj devis_count + carte devis finale (PDF/WhatsApp/Email).
+async function creerDevisEtAfficher(payload) {
+  try {
+    const res = await Api.createDevis(payload);
+    const stored = localStorage.getItem('dp_artisan');
+    if (stored) {
+      const a = JSON.parse(stored);
+      a.devis_count = (a.devis_count || 0) + 1;
+      localStorage.setItem('dp_artisan', JSON.stringify(a));
+      if (a.plan === 'gratuit') showQuotaBanner(Math.max(0, 3 - a.devis_count));
+    }
+    appendMessage('bot', '', {
+      type:     'devis-card',
+      total:    res.total,
+      client:   payload.client_nom,
+      numero:   res.numero,
+      devis_id: res.id,
+      phone:    payload.client_telephone || '',
+      // Le backend renvoie l'email retenu (null si absent / invalide).
+      email:    res.client_email || payload.client_email || ''
+    });
+    setProgress(100);
+  } catch (err) {
+    appendMessage('bot', `Erreur : ${err.message}`);
+  }
+}
+
 // ── NAVIGATION ONGLETS ────────────────────────────────────────
 // showTab colore le bouton actif ET bascule la visibilité des écrans.
 // Onglet "chat" : on montre le flow bot habituel (chat, quick-replies,
 // voice-confirm, input-zone, quota-banner, progress-bar) + le bouton
 // "+ Nouveau" du header. Onglets "devis"/"profil" : on masque tout ça et
 // on affiche l'écran dédié.
-const CHAT_ELS = ['chat', 'quick-replies', 'voice-confirm', 'input-zone', 'quota-banner', 'progress-bar'];
+const CHAT_ELS = ['chat', 'quick-replies', 'voice-confirm', 'confirm-devis', 'input-zone', 'quota-banner', 'progress-bar'];
 
 function showTab(tab) {
   currentTab = tab;

@@ -247,22 +247,6 @@ function normalizeEmail(val) {
   return e;
 }
 
-// Fusion défensive contre les oublis du LLM. Pour les 4 champs SCALAIRES qui,
-// une fois connus, ne redeviennent jamais vides normalement : si `nouveau`
-// renvoie une valeur vide/null/falsy ALORS QUE `ancien` en avait déjà une non
-// vide, on garde celle de `ancien`. Tout le reste de `nouveau` (lignes,
-// main_oeuvre, acompte, surfaces...) est conservé tel quel — c'est la version
-// finale voulue. Même logique que côté frontend (bot.js).
-const CHAMPS_DRAFT_PROTEGES = ['client_nom', 'client_telephone', 'client_email', 'type_travaux'];
-function fusionnerDraft(nouveau, ancien) {
-  const base     = (ancien && typeof ancien === 'object' && !Array.isArray(ancien)) ? ancien : {};
-  const fusionne = { ...nouveau };
-  for (const champ of CHAMPS_DRAFT_PROTEGES) {
-    if (!fusionne[champ] && base[champ]) fusionne[champ] = base[champ];
-  }
-  return fusionne;
-}
-
 // ══════════════════════════════════════════════════════════════
 // CRON QUOTIDIEN
 // ══════════════════════════════════════════════════════════════
@@ -1018,10 +1002,11 @@ MÉMOIRE DU DEVIS (OBLIGATOIRE À CHAQUE QUESTION) :
 - Le contenu de ce bloc est repris TEL QUEL, plus bas dans ce prompt, sous "ÉTAT ACTUEL DU DEVIS". Pars TOUJOURS de cet état déjà connu et complète-le avec la nouvelle information : ne repars jamais de zéro, ne perds jamais une donnée (nom, téléphone, fourniture déjà notée...) déjà présente dans "ÉTAT ACTUEL DU DEVIS".
 - Ne remets JAMAIS à null un champ qui a déjà une valeur connue dans "ÉTAT ACTUEL DU DEVIS", même si la conversation dévie du WORKFLOW prévu (ex : l'artisan enchaîne directement sur le type de travaux ou les fournitures) — recopie systématiquement les valeurs déjà connues.
 - L'artisan ne voit jamais ce bloc (il est retiré automatiquement avant l'affichage). N'y fais aucune référence dans ta phrase.
-- Ce bloc n'apparaît QUE sur les questions. Sur la réponse finale, ta réponse est UNIQUEMENT le JSON create_devis, rien d'autre (ni bloc <<<DRAFT>>>, ni texte autour).
+- Ce bloc n'apparaît QUE sur les questions. Sur la réponse finale, ta réponse est UNIQUEMENT le JSON de confirmation (voir plus bas), rien d'autre (ni bloc <<<DRAFT>>>, ni texte autour).
 
-- Quand le devis est complet et CONFIRMÉ, réponds UNIQUEMENT avec ce JSON EXACT (rien avant, rien après, pas de backticks) :
-{"action":"create_devis","data":{"client_nom":"NOM","client_telephone":"TEL_OU_NULL","client_email":"EMAIL_OU_NULL","type_travaux":"TYPE","lignes":[{"designation":"NOM","quantite":0,"unite":"UNITE","prix_unitaire":0}],"surfaces":[],"main_oeuvre":0,"acompte":0}}
+- Quand le devis est complet et CONFIRMÉ par l'artisan (il a répondu "oui" ou équivalent à la question de confirmation), réponds UNIQUEMENT avec ce JSON EXACT, rien avant, rien après, pas de backticks, pas de bloc <<<DRAFT>>> :
+{"action":"devis_confirme"}
+Tu n'as PAS besoin de re-décrire le devis à ce moment-là — l'état déjà connu (ÉTAT ACTUEL DU DEVIS ci-dessus) est utilisé tel quel.
 - Pour les surfaces, calcule longueur × largeur et propose +10% pour chutes
 
 ÉTAT ACTUEL DU DEVIS :
@@ -1076,38 +1061,62 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
     const rawVisible = raw.replace(/\s*<<<DRAFT>>>[\s\S]*?<<<END>>>\s*/g, '').trim();
     const clean = rawVisible.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
-    let action = null;
+    // ── Détection du signal de confirmation (Piste 1) ─────────
+    // L'IA n'émet plus le JSON create_devis complet — juste
+    // {"action":"devis_confirme"}. C'est le CODE qui assemble ensuite le
+    // payload à partir de devis_draft (source de vérité) : on supprime ainsi
+    // la 4e représentation LLM du devis et la divergence qu'elle causait.
+    let confirme = false;
     try {
       const parsed = JSON.parse(clean);
-      if (parsed.action === 'create_devis' && parsed.data) action = parsed;
+      if (parsed && parsed.action === 'devis_confirme') confirme = true;
     } catch {
       try {
-        const jsonMatch = clean.match(/\{[\s\S]*"action"\s*:\s*"create_devis"[\s\S]*\}/);
+        const jsonMatch = clean.match(/\{[\s\S]*"action"\s*:\s*"devis_confirme"[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed.action === 'create_devis' && parsed.data) action = parsed;
+          if (parsed && parsed.action === 'devis_confirme') confirme = true;
         }
       } catch {}
     }
 
-    // ── Fusion défensive du JSON final create_devis ────────────
-    // La fusion de bot.js protège devis_draft au fil des QUESTIONS, mais le JSON
-    // final create_devis est produit indépendamment par l'IA en fin de
-    // conversation et ne repasse JAMAIS par ce devis_draft protégé. Test réel :
-    // devis_draft correct ("Mr Mohamed" / "0987654321") pendant plusieurs tours,
-    // puis action.data final avec client_nom/client_telephone à null → insertion
-    // refusée en base ("Données incomplètes"). On applique donc ici la MÊME
-    // logique de fusion (mêmes 4 champs scalaires protégés) sur action.data, à
-    // partir du devis_draft reçu dans req.body (celui qui a construit le prompt
-    // système). Couvre les DEUX chemins de détection ci-dessus (JSON.parse
-    // direct et fallback jsonMatch), qui convergent vers ce `if (action)`.
-    // Si devis_draft est vide/absent, rien à fusionner → comportement inchangé.
-    if (action && devis_draft && typeof devis_draft === 'object' &&
-        !Array.isArray(devis_draft) && Object.keys(devis_draft).length > 0) {
-      action.data = fusionnerDraft(action.data, devis_draft);
+    if (confirme) {
+      const draftOk  = devis_draft && typeof devis_draft === 'object' && !Array.isArray(devis_draft);
+      const nomOk    = draftOk && typeof devis_draft.client_nom === 'string' && devis_draft.client_nom.trim() !== '';
+      const lignesOk = draftOk && Array.isArray(devis_draft.lignes) && devis_draft.lignes.length > 0;
+
+      if (!nomOk || !lignesOk) {
+        // État incomplet côté serveur → relance polie, jamais une erreur.
+        const manque = [];
+        if (!nomOk)    manque.push('le nom du client');
+        if (!lignesOk) manque.push('au moins une fourniture');
+        return res.json({
+          reply:  `Il manque encore ${manque.join(' et ')}. Complète le devis avant de confirmer.`,
+          action: null,
+          draft
+        });
+      }
+
+      // Le CODE construit le payload à partir de devis_draft. On garde le nom
+      // "create_devis" dans l'action renvoyée au frontend pour ne rien casser
+      // dans bot.js (détection de finalAction) : seul le signal reçu de l'IA a
+      // changé de nom, pas le contrat avec le frontend.
+      const action = {
+        action: 'create_devis',
+        data: {
+          client_nom:       devis_draft.client_nom,
+          client_telephone: devis_draft.client_telephone,
+          client_email:     devis_draft.client_email,
+          type_travaux:     devis_draft.type_travaux,
+          lignes:           devis_draft.lignes || [],
+          surfaces:         [],
+          main_oeuvre:      devis_draft.main_oeuvre || 0,
+          acompte:          devis_draft.acompte || 0
+        }
+      };
+      return res.json({ reply: '✅ Parfait ! Je prépare ton devis...', action, draft });
     }
 
-    if (action) return res.json({ reply: '✅ Parfait ! Je génère ton devis...', action, draft });
     res.json({ reply: clean, action: null, draft });
 
   } catch (err) {

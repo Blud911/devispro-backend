@@ -1,6 +1,31 @@
 // ── bot.js v2 — Logique conversation DevisPro CI ──────────────
 // Corrections : détection JSON robuste, contact client, limite gratuit
 
+// ── VALIDATION DÉFENSIVE client_telephone (Piste 3) ───────────
+// Cas réel observé : l'IA a rempli client_telephone avec "12500" — en fait le
+// prix unitaire d'une fourniture du MÊME draft (hallucination d'une valeur
+// PLAUSIBLE, pas un simple oubli). La fusion "vide → ancien" ne protège que
+// contre le vide ; ces deux tests rejettent une valeur au format implausible
+// OU qui collisionne avec une valeur numérique déjà présente dans le draft.
+function telephonePlausible(val) {
+  if (!val || typeof val !== 'string') return false;
+  const chiffres = val.replace(/[^\d]/g, '');
+  return chiffres.length >= 8 && chiffres.length <= 13;
+}
+function enCollisionAvecUneValeurNumerique(val, draft) {
+  if (!val) return false;
+  const cible = String(val).replace(/[^\d]/g, '');
+  if (!cible) return false;
+  const valeurs = [];
+  if (draft.main_oeuvre != null) valeurs.push(String(draft.main_oeuvre));
+  if (draft.acompte != null) valeurs.push(String(draft.acompte));
+  (draft.lignes || []).forEach(l => {
+    if (l.quantite != null) valeurs.push(String(l.quantite));
+    if (l.prix_unitaire != null) valeurs.push(String(l.prix_unitaire));
+  });
+  return valeurs.includes(cible);
+}
+
 const Bot = {
   history:     [],
   devis_draft: {},
@@ -46,6 +71,18 @@ const Bot = {
         const CHAMPS_PROTEGES = ['client_nom', 'client_telephone', 'client_email', 'type_travaux'];
         const ancien   = this.devis_draft || {};
         const fusionne = { ...draft };
+
+        // Validation défensive : si l'IA a mis une valeur implausible OU
+        // collisionnant avec un montant du draft dans client_telephone
+        // (ex. "12500" = prix d'une fourniture), on la neutralise AVANT la
+        // fusion → elle est alors traitée comme un oubli normal, et la boucle
+        // ci-dessous restaure l'ancienne valeur connue si elle existe.
+        if (fusionne.client_telephone &&
+            (!telephonePlausible(fusionne.client_telephone) ||
+             enCollisionAvecUneValeurNumerique(fusionne.client_telephone, draft))) {
+          fusionne.client_telephone = null;
+        }
+
         for (const champ of CHAMPS_PROTEGES) {
           if (!fusionne[champ] && ancien[champ]) fusionne[champ] = ancien[champ];
         }
