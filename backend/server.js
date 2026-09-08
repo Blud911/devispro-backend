@@ -294,7 +294,7 @@ function buildDevisPDF({ artisan, numero, client_nom, client_telephone, objet, t
 
     // ── En-tête ───────────────────────────────────────────────
     doc.rect(0, 0, 595, 90).fill(BLUE);
-    doc.fillColor(WHITE).fontSize(22).font('Helvetica-Bold').text('DevisPro CI', 50, 20);
+    doc.fillColor(WHITE).fontSize(22).font('Helvetica-Bold').text(artisan.nom_entreprise || 'DevisPro CI', 50, 20);
     doc.fontSize(10).font('Helvetica')
        .text(`${artisan.nom} ${artisan.prenom || ''} — ${artisan.metier}`, 50, 48)
        .text(`Tél : ${artisan.telephone}`, 50, 62);
@@ -410,7 +410,7 @@ async function generatePDF({ res, ...data }) {
 // ══════════════════════════════════════════════════════════════
 
 app.post('/api/auth/register', authLimiter, async (req, res) => {
-  const { nom, prenom, telephone, metier, password, email } = req.body;
+  const { nom, prenom, telephone, metier, password, email, nom_entreprise } = req.body;
   if (!nom || !telephone || !metier || !password) {
     return res.status(400).json({ error: 'Champs obligatoires manquants' });
   }
@@ -422,12 +422,16 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
   // normalizeEmail() (même fonction que pour client_email sur un devis) : une
   // valeur absente / vide / invalide devient null, sans erreur.
   const artisanEmail = normalizeEmail(email);
+  // Nom de l'entreprise/activité : texte libre, facultatif, jamais bloquant et
+  // jamais dans les champs obligatoires. Aucune validation de format ; on stocke
+  // null si rien n'est fourni.
+  const nomEntreprise = (nom_entreprise || '').toString().trim() || null;
   try {
     const hash   = await bcrypt.hash(password, 10);
     const result = await pool.query(
-      `INSERT INTO artisans (id, nom, prenom, telephone, metier, email, password_hash, devis_count, statut, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,0,'en_attente',NOW()) RETURNING id`,
-      [uuidv4(), nom, prenom || '', telephone, metier, artisanEmail, hash]
+      `INSERT INTO artisans (id, nom, prenom, telephone, metier, nom_entreprise, email, password_hash, devis_count, statut, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,'en_attente',NOW()) RETURNING id`,
+      [uuidv4(), nom, prenom || '', telephone, metier, nomEntreprise, artisanEmail, hash]
     );
     const tempToken = jwt.sign({ id: result.rows[0].id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({
@@ -489,6 +493,7 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         statut:           artisan.statut,
         expires_at:       artisan.expires_at,
         email:            artisan.email,
+        nom_entreprise:   artisan.nom_entreprise,
         photo_disponible: isMetierEligiblePhoto(artisan.metier)
       }
     });
@@ -543,7 +548,7 @@ app.post('/api/auth/activate', authLimiter, authMiddleware, async (req, res) => 
 app.get('/api/profil', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier, email, logo_url, devis_count, plan, statut, expires_at FROM artisans WHERE id=$1',
+      'SELECT id, nom, prenom, telephone, metier, nom_entreprise, email, logo_url, devis_count, plan, statut, expires_at FROM artisans WHERE id=$1',
       [req.user.id]
     );
     const artisan = result.rows[0];
@@ -557,7 +562,7 @@ app.put('/api/profil', authMiddleware, async (req, res) => {
   // dans req.body. Un appel { nom, metier } ne modifie jamais telephone/prenom.
   // `email` (contact artisan, facultatif) passe par normalizeEmail() : une
   // valeur invalide devient null, jamais une erreur.
-  const CHAMPS_AUTORISES = ['nom', 'prenom', 'telephone', 'metier', 'email'];
+  const CHAMPS_AUTORISES = ['nom', 'prenom', 'telephone', 'metier', 'nom_entreprise', 'email'];
   const colonnes = [];
   const valeurs  = [];
 
@@ -704,7 +709,7 @@ app.get('/api/devis/:id/pdf', async (req, res) => {
 
     const devis         = devisResult.rows[0];
     const artisanResult = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier FROM artisans WHERE id=$1', [userId]
+      'SELECT id, nom, prenom, telephone, metier, nom_entreprise FROM artisans WHERE id=$1', [userId]
     );
 
     await generatePDF({
@@ -799,7 +804,7 @@ app.post('/api/devis/:id/envoyer-email', emailLimiter, authMiddleware, async (re
     const senderName = process.env.BREVO_SENDER_NAME || 'DevisPro CI';
 
     const artisanResult = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier FROM artisans WHERE id=$1', [req.user.id]
+      'SELECT id, nom, prenom, telephone, metier, nom_entreprise FROM artisans WHERE id=$1', [req.user.id]
     );
     const artisan    = artisanResult.rows[0];
     const artisanNom = `${artisan.nom} ${artisan.prenom || ''}`.trim();
@@ -876,7 +881,7 @@ app.post('/api/devis/:id/envoyer-email', emailLimiter, authMiddleware, async (re
 app.get('/d/:code', async (req, res) => {
   try {
     const partageResult = await pool.query(
-      `SELECT dp.*, d.*, a.nom, a.prenom, a.telephone, a.metier
+      `SELECT dp.*, d.*, a.nom, a.prenom, a.telephone, a.metier, a.nom_entreprise
        FROM devis_partages dp
        JOIN devis d ON dp.devis_id = d.id
        JOIN artisans a ON dp.artisan_id = a.id
@@ -894,7 +899,7 @@ app.get('/d/:code', async (req, res) => {
     }
 
     const row     = partageResult.rows[0];
-    const artisan = { id: row.artisan_id, nom: row.nom, prenom: row.prenom, telephone: row.telephone, metier: row.metier };
+    const artisan = { id: row.artisan_id, nom: row.nom, prenom: row.prenom, telephone: row.telephone, metier: row.metier, nom_entreprise: row.nom_entreprise };
 
     await generatePDF({
       artisan,

@@ -54,11 +54,12 @@ async function submitAuth() {
       localStorage.setItem('dp_artisan', JSON.stringify(res.artisan));
       showApp(res.artisan);
     } else {
-      const nom    = document.getElementById('auth-nom').value.trim();
-      const metier = document.getElementById('auth-metier').value.trim();
-      const email  = document.getElementById('auth-email').value.trim();
+      const nom        = document.getElementById('auth-nom').value.trim();
+      const metier     = document.getElementById('auth-metier').value.trim();
+      const entreprise = document.getElementById('auth-entreprise').value.trim();
+      const email      = document.getElementById('auth-email').value.trim();
       if (!nom || !metier) { alert('Remplis ton nom et ton métier'); return; }
-      const res = await Api.register(nom, tel, metier, pass, email);
+      const res = await Api.register(nom, tel, metier, pass, email, entreprise);
       if (res.token) Api.setToken(res.token);
       showPendingScreen();
     }
@@ -543,6 +544,8 @@ async function loadProfilScreen() {
     const p = await Api.getProfil();
     document.getElementById('profil-nom').value             = p.nom    || '';
     document.getElementById('profil-metier').value          = p.metier || '';
+    document.getElementById('profil-entreprise').value      = p.nom_entreprise || '';
+    document.getElementById('profil-email').value           = p.email  || '';
     document.getElementById('profil-telephone').textContent = p.telephone || '—';
     document.getElementById('profil-plan').textContent      = p.plan   || '—';
     document.getElementById('profil-statut').textContent    = p.statut || '—';
@@ -574,8 +577,10 @@ async function loadProfilScreen() {
 async function saveProfil() {
   const btn    = document.getElementById('profil-save-btn');
   const msg    = document.getElementById('profil-msg');
-  const nom    = document.getElementById('profil-nom').value.trim();
-  const metier = document.getElementById('profil-metier').value.trim();
+  const nom        = document.getElementById('profil-nom').value.trim();
+  const metier     = document.getElementById('profil-metier').value.trim();
+  const entreprise = document.getElementById('profil-entreprise').value.trim();
+  const email      = document.getElementById('profil-email').value.trim();
   if (!nom || !metier) { alert('Le nom et le métier sont obligatoires'); return; }
 
   const label = btn.textContent;
@@ -583,7 +588,9 @@ async function saveProfil() {
   msg.style.display = 'none';
 
   try {
-    await Api.updateProfil({ nom, metier });
+    // email reste facultatif : jamais bloquant. Le backend applique
+    // normalizeEmail() → une valeur vide ou invalide devient null.
+    await Api.updateProfil({ nom, metier, email, nom_entreprise: entreprise });
 
     // Plutôt que de recalculer isMetierEligiblePhoto côté client, on relit le
     // profil : le backend renvoie photo_disponible à jour selon le métier.

@@ -35,7 +35,7 @@ const Api = {
     return data;
   },
 
-  register(nom, telephone, metier, password, email) { return this.request('POST', '/api/auth/register', { nom, telephone, metier, password, email }); },
+  register(nom, telephone, metier, password, email, nomEntreprise) { return this.request('POST', '/api/auth/register', { nom, telephone, metier, password, email, nom_entreprise: nomEntreprise }); },
   activateCode(code)                         { return this.request('POST', '/api/auth/activate',  { code }); },
 
   getProfil()        { return this.request('GET', '/api/profil'); },

@@ -159,6 +159,7 @@
     <div id="register-fields" style="display:none; flex-direction:column; gap:12px;">
       <input class="screen-input" id="auth-nom"    type="text"  placeholder="Ton nom complet">
       <input class="screen-input" id="auth-metier" type="text"  placeholder="Ton métier (ex: Carreleur)">
+      <input class="screen-input" id="auth-entreprise" type="text" placeholder="Nom de ton entreprise/activité (optionnel)">
       <input class="screen-input" id="auth-email"  type="email" placeholder="Email (optionnel)">
     </div>
     <button class="screen-btn" id="auth-submit-btn" onclick="submitAuth()">Se connecter</button>
@@ -258,6 +259,12 @@
 
       <label class="profil-label" for="profil-metier">Métier</label>
       <input class="screen-input" id="profil-metier" type="text" placeholder="Ton métier (ex: Carreleur)">
+
+      <label class="profil-label" for="profil-entreprise">Nom de l'entreprise/activité</label>
+      <input class="screen-input" id="profil-entreprise" type="text" placeholder="Nom de ton entreprise/activité (optionnel)">
+
+      <label class="profil-label" for="profil-email">Email</label>
+      <input class="screen-input" id="profil-email" type="email" placeholder="Email (optionnel)">
 
       <label class="profil-label">Téléphone</label>
       <div class="profil-readonly" id="profil-telephone">—</div>
