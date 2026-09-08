@@ -1040,6 +1040,9 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
     if (draftMatch) {
       try {
         draft = JSON.parse(draftMatch[1].trim());
+        // TEMPORAIRE — diagnostic de la régression "Données incomplètes"
+        // (scénario mécanique). À RETIRER une fois le bug identifié.
+        console.log('[BOT][DRAFT-DEBUG]', JSON.stringify(draft));
       } catch (parseErr) {
         // Bloc mal formé : on log et on l'ignore, sans jamais faire échouer la route.
         console.error('[BOT] Bloc <<<DRAFT>>> mal formé, ignoré :', parseErr.message);
