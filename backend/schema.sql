@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS devis (
   numero            VARCHAR(50) NOT NULL,
   client_nom        VARCHAR(150) NOT NULL,
   client_telephone  VARCHAR(20),
+  client_email      VARCHAR(150),           -- facultatif : envoi du PDF par email (Brevo)
   objet             TEXT,
   type_travaux      VARCHAR(100),
   lignes            JSONB NOT NULL,         -- [{ designation, quantite, unite, prix_unitaire }]
@@ -52,3 +53,9 @@ CREATE INDEX IF NOT EXISTS idx_devis_artisan    ON devis(artisan_id);
 CREATE INDEX IF NOT EXISTS idx_devis_statut     ON devis(statut);
 CREATE INDEX IF NOT EXISTS idx_tarifs_artisan   ON tarifs(artisan_id);
 CREATE INDEX IF NOT EXISTS idx_tarifs_usage     ON tarifs(usage_count DESC);
+
+-- ══════════════════════════════════════════════════════════════
+-- MIGRATIONS (bases de données déjà créées avant l'ajout d'une colonne)
+-- Idempotent : sûr à rejouer à chaque déploiement.
+-- ══════════════════════════════════════════════════════════════
+ALTER TABLE devis ADD COLUMN IF NOT EXISTS client_email VARCHAR(150);

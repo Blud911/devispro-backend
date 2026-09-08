@@ -96,6 +96,24 @@ const authLimiter = rateLimit({
   legacyHeaders: false
 });
 
+// Rate-limit léger et dédié pour l'envoi de devis par email (Brevo) : pas besoin
+// d'être aussi strict que authLimiter, mais évite qu'un artisan qui spamme le
+// bouton "Envoyer par mail" ne consomme le quota Brevo ou ne harcèle le client.
+const emailLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 20,
+  message: { error: "Trop d'envois d'email. Réessaie dans 10 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// ── Variables d'environnement optionnelles (envoi email via Brevo) ──────
+// La fonctionnalité "envoyer le devis par email" reste DÉSACTIVÉE tant que
+// BREVO_API_KEY n'est pas définie — le serveur démarre normalement sans.
+//   BREVO_API_KEY       clé API transactionnelle Brevo (obligatoire pour activer l'envoi)
+//   BREVO_SENDER_EMAIL  adresse expéditeur vérifiée dans Brevo (obligatoire pour activer l'envoi)
+//   BREVO_SENDER_NAME   nom affiché de l'expéditeur (optionnel, défaut : "DevisPro CI")
+
 // ── PostgreSQL ─────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -148,6 +166,41 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// ── Éligibilité "analyse photo" par métier ─────────────────────
+// L'analyse photo (Pixtral) ne sait estimer qu'une PIÈCE (surface
+// longueur × largeur) ou lire un DOCUMENT/FACTURE. Elle n'a de sens que
+// pour les métiers du bâtiment / travaux de surface. Pour les autres
+// métiers (mécanique auto, réparation électroménager...), le bouton photo
+// est masqué côté frontend ET la route /api/bot/photo refuse la requête
+// (défense en profondeur). Le champ `metier` reste en texte libre : on ne
+// change pas la saisie, on détecte juste par mots-clés.
+// Mots-clés stockés déjà normalisés (minuscule, sans accent).
+const METIERS_PHOTO_ELIGIBLES = [
+  'carrel', 'peintr', 'plafond', 'macon', 'plaqu', 'couvr', 'toiture',
+  'menuis', 'plomb', 'electric', 'etancheite', 'climatisation', 'faience',
+  'batiment', 'construction', 'renovation', 'gros oeuvre'
+];
+
+// normaliser : met en minuscule et retire les accents / diacritiques
+// (normalize('NFD') sépare les caractères accentués, la regex \p{Diacritic}
+// supprime les signes diacritiques ; les ligatures œ/æ sont dépliées à la
+// main car NFD ne les décompose pas).
+function normaliser(txt) {
+  return String(txt || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/œ/g, 'oe')
+    .replace(/æ/g, 'ae');
+}
+
+// isMetierEligiblePhoto : true si le métier (texte libre) contient un des
+// mots-clés bâtiment/surface une fois normalisé.
+function isMetierEligiblePhoto(metier) {
+  const m = normaliser(metier);
+  return METIERS_PHOTO_ELIGIBLES.some(kw => m.includes(kw));
+}
+
 // ── Admin auth middleware ──────────────────────────────────────
 function adminAuth(req, res, next) {
   const header = req.headers.authorization;
@@ -176,6 +229,17 @@ function parseJson(val) {
     try { return JSON.parse(val); } catch { return []; }
   }
   return val;
+}
+
+// Normalise un email client : renvoie l'adresse nettoyée si elle est plausible,
+// sinon null. Le bot peut envoyer "non" / "null" / "" quand l'artisan n'a pas
+// l'email — on ne stocke jamais ces valeurs comme une vraie adresse.
+function normalizeEmail(val) {
+  if (!val || typeof val !== 'string') return null;
+  const e = val.trim().toLowerCase();
+  if (!e || e.length > 150) return null;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return null;
+  return e;
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -209,16 +273,16 @@ setInterval(expireArtisans, 24 * 60 * 60 * 1000);
 // ══════════════════════════════════════════════════════════════
 // GÉNÉRATEUR PDF
 // ══════════════════════════════════════════════════════════════
-function generatePDF({ artisan, numero, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT, res }) {
+// buildDevisPDF : produit le PDF sous forme de Buffer réutilisable (collecte des
+// chunks via doc.on('data')/doc.on('end')). Toute la mise en page vit ici — un
+// seul endroit — et sert aussi bien le streaming HTTP que la pièce jointe email.
+function buildDevisPDF({ artisan, numero, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT }) {
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 50, size: 'A4' });
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="devis-${numero}.pdf"`);
-    doc.pipe(res);
-
-    res.on('finish', resolve);
-    res.on('error',  reject);
+    const doc    = new PDFDocument({ margin: 50, size: 'A4' });
+    const chunks = [];
+    doc.on('data',  chunk => chunks.push(chunk));
+    doc.on('end',   () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
 
     const BLUE = '#1A3A5C', GOLD = '#C9952B', GRAY = '#F5F5F5',
           WHITE = '#FFFFFF', DARK = '#1C1C1C', pageW = 495;
@@ -324,6 +388,18 @@ function generatePDF({ artisan, numero, client_nom, client_telephone, objet, typ
   });
 }
 
+// generatePDF : conserve l'ancienne signature ({ ..., res }) pour que les routes
+// existantes continuent de streamer le PDF directement vers la réponse HTTP, en
+// s'appuyant sur la fonction commune buildDevisPDF (aucune logique de mise en
+// page dupliquée). Renvoie aussi le Buffer généré au cas où l'appelant en veut.
+async function generatePDF({ res, ...data }) {
+  const buffer = await buildDevisPDF(data);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="devis-${data.numero}.pdf"`);
+  res.send(buffer);
+  return buffer;
+}
+
 // ══════════════════════════════════════════════════════════════
 // ROUTES AUTH
 // ══════════════════════════════════════════════════════════════
@@ -395,14 +471,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     res.json({
       token,
       artisan: {
-        id:          artisan.id,
-        nom:         artisan.nom,
-        telephone:   artisan.telephone,
-        metier:      artisan.metier,
-        plan:        artisan.plan,
-        devis_count: artisan.devis_count,
-        statut:      artisan.statut,
-        expires_at:  artisan.expires_at
+        id:               artisan.id,
+        nom:              artisan.nom,
+        telephone:        artisan.telephone,
+        metier:           artisan.metier,
+        plan:             artisan.plan,
+        devis_count:      artisan.devis_count,
+        statut:           artisan.statut,
+        expires_at:       artisan.expires_at,
+        photo_disponible: isMetierEligiblePhoto(artisan.metier)
       }
     });
   } catch (err) {
@@ -440,6 +517,7 @@ app.post('/api/auth/activate', authLimiter, authMiddleware, async (req, res) => 
       [req.user.id]
     );
     const artisan = artisanResult.rows[0];
+    artisan.photo_disponible = isMetierEligiblePhoto(artisan.metier);
     const token   = jwt.sign({ id: artisan.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
     res.json({ success: true, token, artisan });
   } catch (err) {
@@ -458,16 +536,34 @@ app.get('/api/profil', authMiddleware, async (req, res) => {
       'SELECT id, nom, prenom, telephone, metier, logo_url, devis_count, plan, statut, expires_at FROM artisans WHERE id=$1',
       [req.user.id]
     );
-    res.json(result.rows[0]);
+    const artisan = result.rows[0];
+    if (artisan) artisan.photo_disponible = isMetierEligiblePhoto(artisan.metier);
+    res.json(artisan);
   } catch (err) { res.status(500).json({ error: 'Erreur serveur' }); }
 });
 
 app.put('/api/profil', authMiddleware, async (req, res) => {
-  const { nom, prenom, telephone, metier } = req.body;
+  // Mise à jour partielle : on ne touche QUE les colonnes réellement présentes
+  // dans req.body. Un appel { nom, metier } ne modifie jamais telephone/prenom.
+  const CHAMPS_AUTORISES = ['nom', 'prenom', 'telephone', 'metier'];
+  const colonnes = [];
+  const valeurs  = [];
+
+  for (const champ of CHAMPS_AUTORISES) {
+    if (Object.prototype.hasOwnProperty.call(req.body, champ)) {
+      valeurs.push(req.body[champ]);
+      colonnes.push(`${champ}=$${valeurs.length}`);
+    }
+  }
+
+  if (colonnes.length === 0) return res.json({ success: true });
+
+  valeurs.push(req.user.id);
+
   try {
     await pool.query(
-      'UPDATE artisans SET nom=$1, prenom=$2, telephone=$3, metier=$4 WHERE id=$5',
-      [nom, prenom, telephone, metier, req.user.id]
+      `UPDATE artisans SET ${colonnes.join(', ')} WHERE id=$${valeurs.length}`,
+      valeurs
     );
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: 'Erreur serveur' }); }
@@ -504,10 +600,12 @@ app.get('/api/tarifs', authMiddleware, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 
 app.post('/api/devis', authMiddleware, async (req, res) => {
-  const { client_nom, client_telephone, objet, type_travaux, lignes, main_oeuvre, acompte, surfaces } = req.body;
+  const { client_nom, client_telephone, client_email, objet, type_travaux, lignes, main_oeuvre, acompte, surfaces } = req.body;
   if (!client_nom || !lignes || !lignes.length) {
     return res.status(400).json({ error: 'Données incomplètes' });
   }
+  // Email client facultatif : jamais bloquant, stocké seulement s'il est plausible.
+  const clientEmail = normalizeEmail(client_email);
   try {
     const artisanResult = await pool.query('SELECT * FROM artisans WHERE id=$1', [req.user.id]);
     const artisan = artisanResult.rows[0];
@@ -526,10 +624,10 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
     const pdfUrl   = `${BACKEND_URL}/api/devis/${devisId}/pdf`;
 
     await pool.query(
-      `INSERT INTO devis (id, artisan_id, numero, client_nom, client_telephone, objet,
+      `INSERT INTO devis (id, artisan_id, numero, client_nom, client_telephone, client_email, objet,
         type_travaux, lignes, surfaces, main_oeuvre, acompte, total, statut, pdf_url, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'envoye',$13,NOW())`,
-      [devisId, req.user.id, numero, client_nom, client_telephone || '', objet || '',
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'envoye',$14,NOW())`,
+      [devisId, req.user.id, numero, client_nom, client_telephone || '', clientEmail, objet || '',
        type_travaux || '', JSON.stringify(lignes), JSON.stringify(surfaces || []),
        main_oeuvre || 0, acompte || 0, totalHT, pdfUrl]
     );
@@ -546,7 +644,7 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
 
     await pool.query('UPDATE artisans SET devis_count=devis_count+1 WHERE id=$1', [req.user.id]);
 
-    res.status(201).json({ id: devisId, numero, total: totalHT, pdf_url: pdfUrl, message: `Devis ${numero} créé` });
+    res.status(201).json({ id: devisId, numero, total: totalHT, client_email: clientEmail, pdf_url: pdfUrl, message: `Devis ${numero} créé` });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la création du devis' });
@@ -642,6 +740,107 @@ app.post('/api/devis/:id/share', authMiddleware, async (req, res) => {
   }
 });
 
+// ── POST /api/devis/:id/envoyer-email ─────────────────────────
+// Envoi manuel du PDF du devis au client par email, via Brevo (API
+// transactionnelle /v3/smtp/email, fetch natif — pas de SDK).
+// Fonctionnalité optionnelle : si BREVO_API_KEY n'est pas configurée, la route
+// répond 503 sans jamais empêcher le serveur de tourner.
+app.post('/api/devis/:id/envoyer-email', emailLimiter, authMiddleware, async (req, res) => {
+  try {
+    const devisResult = await pool.query(
+      'SELECT * FROM devis WHERE id=$1 AND artisan_id=$2',
+      [req.params.id, req.user.id]
+    );
+    if (!devisResult.rows.length) return res.status(404).json({ error: 'Devis introuvable' });
+    const devis = devisResult.rows[0];
+
+    if (!devis.client_email) {
+      return res.status(400).json({
+        error: "Ce devis n'a pas d'email client. Ajoute une adresse email au client pour pouvoir lui envoyer le devis par mail."
+      });
+    }
+
+    // BREVO_API_KEY / BREVO_SENDER_EMAIL absentes → fonctionnalité désactivée.
+    const senderEmail = process.env.BREVO_SENDER_EMAIL;
+    if (!process.env.BREVO_API_KEY || !senderEmail) {
+      return res.status(503).json({ error: "Service d'email non configuré" });
+    }
+    const senderName = process.env.BREVO_SENDER_NAME || 'DevisPro CI';
+
+    const artisanResult = await pool.query(
+      'SELECT id, nom, prenom, telephone, metier FROM artisans WHERE id=$1', [req.user.id]
+    );
+    const artisan    = artisanResult.rows[0];
+    const artisanNom = `${artisan.nom} ${artisan.prenom || ''}`.trim();
+    const totalTxt   = `${fcfa(devis.total)} FCFA`;
+
+    // PDF en Buffer (fonction commune) → base64 pour la pièce jointe Brevo,
+    // sans repasser par une requête HTTP interne.
+    const pdfBuffer = await buildDevisPDF({
+      artisan,
+      numero:           devis.numero,
+      client_nom:       devis.client_nom,
+      client_telephone: devis.client_telephone,
+      objet:            devis.objet,
+      type_travaux:     devis.type_travaux,
+      lignes:           parseJson(devis.lignes),
+      surfaces:         parseJson(devis.surfaces),
+      main_oeuvre:      devis.main_oeuvre,
+      acompte:          devis.acompte,
+      totalHT:          devis.total
+    });
+    const pdfBase64 = pdfBuffer.toString('base64');
+
+    const textContent =
+      `Bonjour ${devis.client_nom},\n\n` +
+      `Veuillez trouver ci-joint votre devis ${devis.numero} d'un montant de ${totalTxt}.\n\n` +
+      `Ce devis est valable 30 jours à compter de sa date d'émission.\n\n` +
+      `Cordialement,\n${artisanNom}\n${artisan.metier}\nTél : ${artisan.telephone}`;
+    const htmlContent =
+      `<p>Bonjour ${devis.client_nom},</p>` +
+      `<p>Veuillez trouver ci-joint votre devis <strong>${devis.numero}</strong> ` +
+      `d'un montant de <strong>${totalTxt}</strong>.</p>` +
+      `<p>Ce devis est valable 30 jours à compter de sa date d'émission.</p>` +
+      `<p>Cordialement,<br>${artisanNom}<br>${artisan.metier}<br>Tél : ${artisan.telephone}</p>`;
+
+    let brevoRes, brevoData;
+    try {
+      brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'accept':       'application/json',
+          'api-key':      process.env.BREVO_API_KEY
+        },
+        body: JSON.stringify({
+          sender:      { email: senderEmail, name: senderName },
+          to:          [{ email: devis.client_email, name: devis.client_nom }],
+          subject:     `Votre devis ${devis.numero} — ${artisanNom}`,
+          textContent,
+          htmlContent,
+          attachment:  [{ content: pdfBase64, name: `devis-${devis.numero}.pdf` }]
+        })
+      });
+      brevoData = await brevoRes.json().catch(() => ({}));
+    } catch (netErr) {
+      console.error('[EMAIL] Échec réseau vers Brevo :', netErr.message);
+      return res.status(502).json({ error: "Impossible de joindre le service d'email. Réessaie plus tard." });
+    }
+
+    if (!brevoRes.ok) {
+      console.error('[EMAIL] Brevo a répondu en échec :', brevoRes.status, JSON.stringify(brevoData));
+      return res.status(502).json({ error: "L'envoi de l'email a échoué. Vérifie l'adresse du client ou réessaie plus tard." });
+    }
+
+    await pool.query(`UPDATE devis SET statut='envoye' WHERE id=$1 AND statut='brouillon'`, [devis.id]);
+    console.log(`[EMAIL] Devis ${devis.numero} envoyé à ${devis.client_email} (messageId: ${brevoData.messageId || 'n/a'})`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[EMAIL]', err);
+    res.status(500).json({ error: "Erreur lors de l'envoi de l'email" });
+  }
+});
+
 // ✅ v4.5 : GET /d/:code — lien court public, affiche le PDF
 app.get('/d/:code', async (req, res) => {
   try {
@@ -689,7 +888,7 @@ app.get('/d/:code', async (req, res) => {
 app.get('/api/devis', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, numero, client_nom, objet, total, statut, pdf_url, created_at
+      `SELECT id, numero, client_nom, client_telephone, client_email, objet, total, statut, pdf_url, created_at
        FROM devis WHERE artisan_id=$1 ORDER BY created_at DESC LIMIT 50`,
       [req.user.id]
     );
@@ -758,19 +957,21 @@ Tu poses UNE question à la fois, de manière simple et directe.${devisRestants}
 WORKFLOW :
 1. Demande le nom du client
 2. Demande le numéro de téléphone du client (pour WhatsApp). Si pas de numéro, note null.
-3. Demande le type de travaux
-4. Si carrelage/peinture/faux plafond : propose calcul de surface (longueur × largeur, pièce par pièce)
-5. Pour chaque fourniture : désignation → quantité → unité → prix unitaire → confirme → "Autre fourniture ?"
-6. Demande le coût de la main-d'œuvre
-7. Demande si un acompte est souhaité
-8. Résume et demande confirmation
+3. Demande l'email du client : "As-tu l'email du client ? (facultatif, dis 'non' si tu ne l'as pas)". Si pas d'email, note null. Ne JAMAIS bloquer la création du devis parce que l'email manque.
+4. Demande le type de travaux
+5. Si carrelage/peinture/faux plafond : propose calcul de surface (longueur × largeur, pièce par pièce)
+6. Pour chaque fourniture : désignation → quantité → unité → prix unitaire → confirme → "Autre fourniture ?"
+7. Demande le coût de la main-d'œuvre
+8. Demande si un acompte est souhaité
+9. Résume et demande confirmation
 
 RÈGLES ABSOLUES :
 - Français simple, comme on parle à Abidjan
 - UNE question par réponse
 - PAS de markdown : pas de **, pas de ###, pas de tirets — texte brut uniquement
+- L'email du client est FACULTATIF : si l'artisan dit "non" / "pas d'email" / laisse vide, mets client_email à null et continue normalement
 - Quand le devis est complet et CONFIRMÉ, réponds UNIQUEMENT avec ce JSON EXACT (rien avant, rien après, pas de backticks) :
-{"action":"create_devis","data":{"client_nom":"NOM","client_telephone":"TEL_OU_NULL","type_travaux":"TYPE","lignes":[{"designation":"NOM","quantite":0,"unite":"UNITE","prix_unitaire":0}],"surfaces":[],"main_oeuvre":0,"acompte":0}}
+{"action":"create_devis","data":{"client_nom":"NOM","client_telephone":"TEL_OU_NULL","client_email":"EMAIL_OU_NULL","type_travaux":"TYPE","lignes":[{"designation":"NOM","quantite":0,"unite":"UNITE","prix_unitaire":0}],"surfaces":[],"main_oeuvre":0,"acompte":0}}
 - Pour les surfaces, calcule longueur × largeur et propose +10% pour chutes
 
 ÉTAT ACTUEL DU DEVIS :
@@ -823,6 +1024,23 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
 // ══════════════════════════════════════════════════════════════
 
 app.post('/api/bot/photo', authMiddleware, async (req, res) => {
+  // Défense en profondeur : l'analyse photo n'a de sens que pour les métiers
+  // bâtiment/surface. Le bouton est déjà masqué côté frontend pour les autres,
+  // mais on refuse aussi ici au cas où la requête serait forgée.
+  try {
+    const metierResult = await pool.query('SELECT metier FROM artisans WHERE id=$1', [req.user.id]);
+    const artisan = metierResult.rows[0];
+    if (!artisan || !isMetierEligiblePhoto(artisan.metier)) {
+      return res.status(403).json({
+        type: 'indisponible',
+        message: "L'analyse photo n'est pas encore disponible pour ton métier. Décris ta demande par message, je peux t'aider directement."
+      });
+    }
+  } catch (err) {
+    console.error('[PHOTO] Vérification métier échouée :', err.message);
+    return res.status(500).json({ error: "Erreur lors de l'analyse de la photo" });
+  }
+
   const { image } = req.body;
   if (!image) return res.status(400).json({ error: 'Image manquante' });
 
