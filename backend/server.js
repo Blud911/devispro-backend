@@ -247,6 +247,22 @@ function normalizeEmail(val) {
   return e;
 }
 
+// Fusion défensive contre les oublis du LLM. Pour les 4 champs SCALAIRES qui,
+// une fois connus, ne redeviennent jamais vides normalement : si `nouveau`
+// renvoie une valeur vide/null/falsy ALORS QUE `ancien` en avait déjà une non
+// vide, on garde celle de `ancien`. Tout le reste de `nouveau` (lignes,
+// main_oeuvre, acompte, surfaces...) est conservé tel quel — c'est la version
+// finale voulue. Même logique que côté frontend (bot.js).
+const CHAMPS_DRAFT_PROTEGES = ['client_nom', 'client_telephone', 'client_email', 'type_travaux'];
+function fusionnerDraft(nouveau, ancien) {
+  const base     = (ancien && typeof ancien === 'object' && !Array.isArray(ancien)) ? ancien : {};
+  const fusionne = { ...nouveau };
+  for (const champ of CHAMPS_DRAFT_PROTEGES) {
+    if (!fusionne[champ] && base[champ]) fusionne[champ] = base[champ];
+  }
+  return fusionne;
+}
+
 // ══════════════════════════════════════════════════════════════
 // CRON QUOTIDIEN
 // ══════════════════════════════════════════════════════════════
@@ -1072,6 +1088,23 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
           if (parsed.action === 'create_devis' && parsed.data) action = parsed;
         }
       } catch {}
+    }
+
+    // ── Fusion défensive du JSON final create_devis ────────────
+    // La fusion de bot.js protège devis_draft au fil des QUESTIONS, mais le JSON
+    // final create_devis est produit indépendamment par l'IA en fin de
+    // conversation et ne repasse JAMAIS par ce devis_draft protégé. Test réel :
+    // devis_draft correct ("Mr Mohamed" / "0987654321") pendant plusieurs tours,
+    // puis action.data final avec client_nom/client_telephone à null → insertion
+    // refusée en base ("Données incomplètes"). On applique donc ici la MÊME
+    // logique de fusion (mêmes 4 champs scalaires protégés) sur action.data, à
+    // partir du devis_draft reçu dans req.body (celui qui a construit le prompt
+    // système). Couvre les DEUX chemins de détection ci-dessus (JSON.parse
+    // direct et fallback jsonMatch), qui convergent vers ce `if (action)`.
+    // Si devis_draft est vide/absent, rien à fusionner → comportement inchangé.
+    if (action && devis_draft && typeof devis_draft === 'object' &&
+        !Array.isArray(devis_draft) && Object.keys(devis_draft).length > 0) {
+      action.data = fusionnerDraft(action.data, devis_draft);
     }
 
     if (action) return res.json({ reply: '✅ Parfait ! Je génère ton devis...', action, draft });
