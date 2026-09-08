@@ -281,7 +281,7 @@ setInterval(expireArtisans, 24 * 60 * 60 * 1000);
 // buildDevisPDF : produit le PDF sous forme de Buffer réutilisable (collecte des
 // chunks via doc.on('data')/doc.on('end')). Toute la mise en page vit ici — un
 // seul endroit — et sert aussi bien le streaming HTTP que la pièce jointe email.
-function buildDevisPDF({ artisan, numero, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT }) {
+function buildDevisPDF({ artisan, numero, numero_facture, reference_bien, client_nom, client_telephone, objet, type_travaux, lignes, surfaces, main_oeuvre, acompte, totalHT }) {
   return new Promise((resolve, reject) => {
     const doc    = new PDFDocument({ margin: 50, size: 'A4' });
     const chunks = [];
@@ -292,6 +292,13 @@ function buildDevisPDF({ artisan, numero, client_nom, client_telephone, objet, t
     const BLUE = '#1A3A5C', GOLD = '#C9952B', GRAY = '#F5F5F5',
           WHITE = '#FFFFFF', DARK = '#1C1C1C', pageW = 495;
 
+    // Un devis devient une FACTURE une fois "marqué payé" (numero_facture rempli).
+    // On distingue alors visuellement le document (libellé + numéro affiché) sans
+    // changer la mise en page.
+    const estFacture    = !!numero_facture;
+    const typeDoc       = estFacture ? 'FACTURE' : 'DEVIS';
+    const numeroAffiche = estFacture ? numero_facture : numero;
+
     // ── En-tête ───────────────────────────────────────────────
     doc.rect(0, 0, 595, 90).fill(BLUE);
     doc.fillColor(WHITE).fontSize(22).font('Helvetica-Bold').text(artisan.nom_entreprise || 'DevisPro CI', 50, 20);
@@ -299,7 +306,7 @@ function buildDevisPDF({ artisan, numero, client_nom, client_telephone, objet, t
        .text(`${artisan.nom} ${artisan.prenom || ''} — ${artisan.metier}`, 50, 48)
        .text(`Tél : ${artisan.telephone}`, 50, 62);
     doc.fillColor(GOLD).fontSize(10).font('Helvetica-Bold')
-       .text(numero, 400, 30, { align: 'right', width: 145 });
+       .text(`${typeDoc} ${numeroAffiche}`, 400, 30, { align: 'right', width: 145 });
     doc.fillColor(WHITE).font('Helvetica').fontSize(9)
        .text(`Date : ${new Date().toLocaleDateString('fr-FR')}`, 400, 48, { align: 'right', width: 145 })
        .text('Validité : 30 jours', 400, 62, { align: 'right', width: 145 });
@@ -309,6 +316,7 @@ function buildDevisPDF({ artisan, numero, client_nom, client_telephone, objet, t
     doc.fillColor(BLUE).fontSize(9).font('Helvetica-Bold').text('CLIENT', 60, 112);
     doc.fillColor(DARK).font('Helvetica').fontSize(11).text(client_nom, 60, 126);
     if (client_telephone) doc.fontSize(9).fillColor('#555555').text(`Tél : ${client_telephone}`, 60, 142);
+    if (reference_bien) doc.fontSize(9).fillColor('#555555').text(`Réf. : ${reference_bien}`, 60, 154);
     if (objet) {
       doc.fillColor(GOLD).fontSize(9).font('Helvetica-Bold').text('OBJET', 320, 112);
       doc.fillColor(DARK).font('Helvetica').fontSize(10).text(objet, 320, 126, { width: 200 });
@@ -618,7 +626,7 @@ app.get('/api/tarifs', authMiddleware, async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 
 app.post('/api/devis', authMiddleware, async (req, res) => {
-  const { client_nom, client_telephone, client_email, objet, type_travaux, lignes, main_oeuvre, acompte, surfaces } = req.body;
+  const { client_nom, client_telephone, client_email, objet, type_travaux, lignes, main_oeuvre, acompte, surfaces, reference_bien } = req.body;
   if (!client_nom || !lignes || !lignes.length) {
     return res.status(400).json({ error: 'Données incomplètes' });
   }
@@ -646,20 +654,24 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
     //   devis.client_nom        VARCHAR(150)
     //   devis.client_telephone  VARCHAR(20)
     //   devis.type_travaux      VARCHAR(100)
+    //   devis.reference_bien    VARCHAR(150)
     //   devis.objet             TEXT  → aucune limite en base, pas de troncature
     //   tarifs.designation      VARCHAR(200)
     //   tarifs.unite            VARCHAR(50)
-    const clientNom   = tronque(client_nom, 150);
-    const clientTel   = tronque(client_telephone, 20);
-    const typeTravaux = tronque(type_travaux, 100);
+    const clientNom     = tronque(client_nom, 150);
+    const clientTel     = tronque(client_telephone, 20);
+    const typeTravaux   = tronque(type_travaux, 100);
+    // Référence libre du bien (immatriculation véhicule, modèle appareil…) :
+    // facultatif, jamais bloquant, tronqué à la limite de colonne comme les autres.
+    const referenceBien = tronque(reference_bien, 150);
 
     await pool.query(
       `INSERT INTO devis (id, artisan_id, numero, client_nom, client_telephone, client_email, objet,
-        type_travaux, lignes, surfaces, main_oeuvre, acompte, total, statut, pdf_url, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'envoye',$14,NOW())`,
+        type_travaux, lignes, surfaces, main_oeuvre, acompte, total, statut, pdf_url, reference_bien, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'envoye',$14,$15,NOW())`,
       [devisId, req.user.id, numero, clientNom, clientTel, clientEmail, objet || '',
        typeTravaux, JSON.stringify(lignes), JSON.stringify(surfaces || []),
-       main_oeuvre || 0, acompte || 0, totalHT, pdfUrl]
+       main_oeuvre || 0, acompte || 0, totalHT, pdfUrl, referenceBien]
     );
 
     for (const l of lignes) {
@@ -715,6 +727,8 @@ app.get('/api/devis/:id/pdf', async (req, res) => {
     await generatePDF({
       artisan:          artisanResult.rows[0],
       numero:           devis.numero,
+      numero_facture:   devis.numero_facture,
+      reference_bien:   devis.reference_bien,
       client_nom:       devis.client_nom,
       client_telephone: devis.client_telephone,
       objet:            devis.objet,
@@ -776,6 +790,44 @@ app.post('/api/devis/:id/share', authMiddleware, async (req, res) => {
   }
 });
 
+// ── PUT /api/devis/:id/marquer-paye ───────────────────────────
+// Transforme un devis en facture : passe le statut à 'paye' et génère un
+// numero_facture (`FACT-${Date.now()}`, même convention que `DEV-${Date.now()}`
+// pour numero). Idempotent : si le devis a DÉJÀ un numero_facture, on renvoie
+// l'existant sans rien régénérer — un double-clic ne crée jamais deux numéros.
+app.put('/api/devis/:id/marquer-paye', authMiddleware, async (req, res) => {
+  try {
+    const devisResult = await pool.query(
+      'SELECT id, numero_facture, facture_generee_le FROM devis WHERE id=$1 AND artisan_id=$2',
+      [req.params.id, req.user.id]
+    );
+    if (!devisResult.rows.length) return res.status(404).json({ error: 'Devis introuvable' });
+
+    const devis = devisResult.rows[0];
+    if (devis.numero_facture) {
+      return res.json({
+        numero_facture:     devis.numero_facture,
+        facture_generee_le: devis.facture_generee_le
+      });
+    }
+
+    const numeroFacture = `FACT-${Date.now()}`;
+    const updateResult  = await pool.query(
+      `UPDATE devis SET statut='paye', numero_facture=$1, facture_generee_le=NOW()
+       WHERE id=$2 AND artisan_id=$3
+       RETURNING numero_facture, facture_generee_le`,
+      [numeroFacture, req.params.id, req.user.id]
+    );
+    res.json({
+      numero_facture:     updateResult.rows[0].numero_facture,
+      facture_generee_le: updateResult.rows[0].facture_generee_le
+    });
+  } catch (err) {
+    console.error('[MARQUER-PAYE]', err);
+    res.status(500).json({ error: 'Erreur lors du passage en facture' });
+  }
+});
+
 // ── POST /api/devis/:id/envoyer-email ─────────────────────────
 // Envoi manuel du PDF du devis au client par email, via Brevo (API
 // transactionnelle /v3/smtp/email, fetch natif — pas de SDK).
@@ -815,6 +867,8 @@ app.post('/api/devis/:id/envoyer-email', emailLimiter, authMiddleware, async (re
     const pdfBuffer = await buildDevisPDF({
       artisan,
       numero:           devis.numero,
+      numero_facture:   devis.numero_facture,
+      reference_bien:   devis.reference_bien,
       client_nom:       devis.client_nom,
       client_telephone: devis.client_telephone,
       objet:            devis.objet,
@@ -904,6 +958,8 @@ app.get('/d/:code', async (req, res) => {
     await generatePDF({
       artisan,
       numero:           row.numero,
+      numero_facture:   row.numero_facture,
+      reference_bien:   row.reference_bien,
       client_nom:       row.client_nom,
       client_telephone: row.client_telephone,
       objet:            row.objet,
@@ -924,7 +980,7 @@ app.get('/d/:code', async (req, res) => {
 app.get('/api/devis', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, numero, client_nom, client_telephone, client_email, objet, total, statut, pdf_url, created_at
+      `SELECT id, numero, numero_facture, client_nom, client_telephone, client_email, reference_bien, objet, total, statut, pdf_url, created_at
        FROM devis WHERE artisan_id=$1 ORDER BY created_at DESC LIMIT 50`,
       [req.user.id]
     );

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS devis (
   client_nom        VARCHAR(150) NOT NULL,
   client_telephone  VARCHAR(20),
   client_email      VARCHAR(150),           -- facultatif : envoi du PDF par email (Brevo)
+  reference_bien    VARCHAR(150),           -- immatriculation véhicule / modèle appareil, libre, tous métiers
   objet             TEXT,
   type_travaux      VARCHAR(100),
   lignes            JSONB NOT NULL,         -- [{ designation, quantite, unite, prix_unitaire }]
@@ -35,6 +36,8 @@ CREATE TABLE IF NOT EXISTS devis (
   total             NUMERIC(12,0) NOT NULL,
   statut            VARCHAR(20) DEFAULT 'brouillon',  -- brouillon | envoye | accepte | paye | annule
   pdf_url           TEXT,
+  numero_facture       VARCHAR(50),   -- rempli seulement une fois "marqué payé"
+  facture_generee_le   TIMESTAMP,
   created_at        TIMESTAMP DEFAULT NOW()
 );
 
@@ -63,3 +66,6 @@ CREATE INDEX IF NOT EXISTS idx_tarifs_usage     ON tarifs(usage_count DESC);
 ALTER TABLE devis ADD COLUMN IF NOT EXISTS client_email VARCHAR(150);
 ALTER TABLE artisans ADD COLUMN IF NOT EXISTS email VARCHAR(150);
 ALTER TABLE artisans ADD COLUMN IF NOT EXISTS nom_entreprise VARCHAR(150);
+ALTER TABLE devis ADD COLUMN IF NOT EXISTS numero_facture VARCHAR(50);
+ALTER TABLE devis ADD COLUMN IF NOT EXISTS facture_generee_le TIMESTAMP;
+ALTER TABLE devis ADD COLUMN IF NOT EXISTS reference_bien VARCHAR(150);

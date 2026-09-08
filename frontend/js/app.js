@@ -349,10 +349,11 @@ let pendingFinalAction = null;
 function showConfirmationDevis(finalAction) {
   pendingFinalAction = finalAction;
 
-  document.getElementById('confirm-nom').value   = finalAction.client_nom       || '';
-  document.getElementById('confirm-tel').value   = finalAction.client_telephone || '';
-  document.getElementById('confirm-email').value = finalAction.client_email     || '';
-  document.getElementById('confirm-type').value  = finalAction.type_travaux     || '';
+  document.getElementById('confirm-nom').value       = finalAction.client_nom       || '';
+  document.getElementById('confirm-tel').value       = finalAction.client_telephone || '';
+  document.getElementById('confirm-email').value     = finalAction.client_email     || '';
+  document.getElementById('confirm-type').value      = finalAction.type_travaux     || '';
+  document.getElementById('confirm-reference').value = finalAction.reference_bien   || '';
 
   const fmt       = n => Number(n || 0).toLocaleString('fr-FR');
   const lignes    = Array.isArray(finalAction.lignes) ? finalAction.lignes : [];
@@ -396,9 +397,10 @@ async function confirmerCreationDevis() {
   const payload = {
     ...pendingFinalAction,
     client_nom:       document.getElementById('confirm-nom').value.trim(),
-    client_telephone: document.getElementById('confirm-tel').value.trim()   || null,
-    client_email:     document.getElementById('confirm-email').value.trim() || null,
-    type_travaux:     document.getElementById('confirm-type').value.trim()  || null
+    client_telephone: document.getElementById('confirm-tel').value.trim()       || null,
+    client_email:     document.getElementById('confirm-email').value.trim()     || null,
+    type_travaux:     document.getElementById('confirm-type').value.trim()      || null,
+    reference_bien:   document.getElementById('confirm-reference').value.trim() || null
   };
 
   pendingFinalAction = null;
@@ -496,6 +498,7 @@ async function loadDevisScreen() {
   const empty = document.getElementById('devis-empty');
   if (!list || !empty) return;
   list.innerHTML = '';
+  list.style.opacity  = '';   // réarme l'affichage après un éventuel état de chargement (marquerPaye)
   empty.textContent   = "Aucun devis pour l'instant";
   empty.style.display = 'none';
 
@@ -506,10 +509,23 @@ async function loadDevisScreen() {
       return;
     }
     devis.forEach(d => {
-      const email    = (d.client_email || '').trim();
-      const hasEmail = email.includes('@');
-      const phone    = (d.client_telephone || '').replace(/'/g, '');
-      const client   = (d.client_nom || '').replace(/'/g, '');
+      const email      = (d.client_email || '').trim();
+      const hasEmail   = email.includes('@');
+      const phone      = (d.client_telephone || '').replace(/'/g, '');
+      const client     = (d.client_nom || '').replace(/'/g, '');
+
+      // Un devis "marqué payé" devient une facture : le badge affiche alors le
+      // numéro de facture, et le bouton "Marquer payé" disparaît (action déjà faite).
+      const estFacture = !!d.numero_facture;
+      const badgeHtml  = estFacture
+        ? `<div style="margin-top:8px;"><span class="devis-badge">Facture ${d.numero_facture}</span></div>`
+        : `<div style="margin-top:8px;"><span class="devis-badge">${d.statut || '—'}</span></div>`;
+      const payeHtml   = estFacture
+        ? ''
+        : `<div class="devis-card-actions">
+          <button class="card-btn secondary" style="flex:1"
+                  onclick="marquerPaye('${d.id}')">💰 Marquer payé</button>
+        </div>`;
 
       const card = document.createElement('div');
       card.className = 'devis-card';
@@ -518,7 +534,7 @@ async function loadDevisScreen() {
         <div class="devis-card-total">${Number(d.total || 0).toLocaleString('fr-FR')} FCFA</div>
         <div class="devis-card-sub">${d.client_nom || ''}</div>
         <div class="devis-card-date">${formatDateFr(d.created_at)}</div>
-        <div style="margin-top:8px;"><span class="devis-badge">${d.statut || '—'}</span></div>
+        ${badgeHtml}
         <div class="devis-card-actions">
           <button class="card-btn primary"   onclick="voirPDF('${d.id}')">📄 Voir PDF</button>
           <button class="card-btn secondary" onclick="partagerWhatsApp('${d.id}', '${phone}', '${d.total}', '${client}')">💬 WhatsApp</button>
@@ -526,12 +542,30 @@ async function loadDevisScreen() {
         ${hasEmail ? `<div class="devis-card-actions">
           <button class="card-btn secondary" style="flex:1"
                   onclick="envoyerParMail('${d.id}', '${email}', this)">📧 Envoyer par mail</button>
-        </div>` : ''}`;
+        </div>` : ''}
+        ${payeHtml}`;
       list.appendChild(card);
     });
   } catch (err) {
     empty.textContent   = "Impossible de charger les devis. Réessaie.";
     empty.style.display = 'block';
+  }
+}
+
+// ── MARQUER PAYÉ → transformer un devis en facture ────────────
+// Appelle le backend (idempotent : un numero_facture déjà présent est renvoyé
+// tel quel, aucun second numéro généré), affiche un état de chargement pendant
+// l'appel, puis rappelle loadDevisScreen() : la carte se recharge avec son
+// badge "Facture …" et sans le bouton.
+async function marquerPaye(devisId) {
+  const list = document.getElementById('devis-list');
+  if (list) list.style.opacity = '0.5';
+  try {
+    await Api.marquerPaye(devisId);
+    await loadDevisScreen();
+  } catch (err) {
+    if (list) list.style.opacity = '';
+    alert(`Impossible de marquer ce devis comme payé : ${err.message}`);
   }
 }
 

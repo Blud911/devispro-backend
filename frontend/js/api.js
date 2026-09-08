@@ -48,6 +48,10 @@ const Api = {
   listDevis()       { return this.request('GET',  '/api/devis'); },
   getDevis(id)      { return this.request('GET',  `/api/devis/${id}`); },
 
+  // Marque un devis comme payé → le backend le transforme en facture
+  // (statut 'paye' + numero_facture). Idempotent côté serveur.
+  marquerPaye(devisId) { return this.request('PUT', `/api/devis/${devisId}/marquer-paye`); },
+
   // URL PDF privée avec token (pour visualisation personnelle)
   getPdfUrl(devisId) {
     return `${API_BASE}/api/devis/${devisId}/pdf?token=${encodeURIComponent(this.token)}`;
