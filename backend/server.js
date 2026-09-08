@@ -231,6 +231,11 @@ function parseJson(val) {
   return val;
 }
 
+// Troncature défensive : coupe une valeur texte à la longueur max de sa colonne
+// avant insertion, pour éviter un échec Postgres 22001 (value too long) quand le
+// bot IA renvoie un texte anormalement long.
+const tronque = (val, max) => (val || '').toString().slice(0, max);
+
 // Normalise un email client : renvoie l'adresse nettoyée si elle est plausible,
 // sinon null. Le bot peut envoyer "non" / "null" / "" quand l'artisan n'a pas
 // l'email — on ne stocke jamais ces valeurs comme une vraie adresse.
@@ -623,12 +628,24 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
     const devisId  = uuidv4();
     const pdfUrl   = `${BACKEND_URL}/api/devis/${devisId}/pdf`;
 
+    // Troncature défensive aux limites de colonnes définies dans schema.sql,
+    // pour éviter un échec Postgres 22001 (value too long) :
+    //   devis.client_nom        VARCHAR(150)
+    //   devis.client_telephone  VARCHAR(20)
+    //   devis.type_travaux      VARCHAR(100)
+    //   devis.objet             TEXT  → aucune limite en base, pas de troncature
+    //   tarifs.designation      VARCHAR(200)
+    //   tarifs.unite            VARCHAR(50)
+    const clientNom   = tronque(client_nom, 150);
+    const clientTel   = tronque(client_telephone, 20);
+    const typeTravaux = tronque(type_travaux, 100);
+
     await pool.query(
       `INSERT INTO devis (id, artisan_id, numero, client_nom, client_telephone, client_email, objet,
         type_travaux, lignes, surfaces, main_oeuvre, acompte, total, statut, pdf_url, created_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'envoye',$14,NOW())`,
-      [devisId, req.user.id, numero, client_nom, client_telephone || '', clientEmail, objet || '',
-       type_travaux || '', JSON.stringify(lignes), JSON.stringify(surfaces || []),
+      [devisId, req.user.id, numero, clientNom, clientTel, clientEmail, objet || '',
+       typeTravaux, JSON.stringify(lignes), JSON.stringify(surfaces || []),
        main_oeuvre || 0, acompte || 0, totalHT, pdfUrl]
     );
 
@@ -638,7 +655,7 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
          VALUES ($1,$2,$3,$4,$5,1)
          ON CONFLICT (artisan_id, designation)
          DO UPDATE SET prix_unitaire=$5, usage_count=tarifs.usage_count+1`,
-        [uuidv4(), req.user.id, l.designation, l.unite || 'unité', l.prix_unitaire]
+        [uuidv4(), req.user.id, tronque(l.designation, 200), tronque(l.unite || 'unité', 50), l.prix_unitaire]
       );
     }
 
@@ -646,6 +663,12 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
 
     res.status(201).json({ id: devisId, numero, total: totalHT, client_email: clientEmail, pdf_url: pdfUrl, message: `Devis ${numero} créé` });
   } catch (err) {
+    // [22001] PostgreSQL : "value too long for type character varying(n)".
+    // Filet en cas de valeur trop longue malgré la troncature défensive :
+    // message clair en 400 plutôt qu'un 500 générique.
+    if (err.code === '22001') {
+      return res.status(400).json({ error: 'Une des valeurs du devis est trop longue, réessaie avec un texte plus court.' });
+    }
     console.error(err);
     res.status(500).json({ error: 'Erreur lors de la création du devis' });
   }
@@ -970,6 +993,15 @@ RÈGLES ABSOLUES :
 - UNE question par réponse
 - PAS de markdown : pas de **, pas de ###, pas de tirets — texte brut uniquement
 - L'email du client est FACULTATIF : si l'artisan dit "non" / "pas d'email" / laisse vide, mets client_email à null et continue normalement
+
+MÉMOIRE DU DEVIS (OBLIGATOIRE À CHAQUE QUESTION) :
+- TANT QUE le devis n'est pas confirmé et finalisé — c'est-à-dire à chaque fois que tu poses une question, et JAMAIS sur la réponse finale create_devis — termine ta réponse par un bloc cumulatif, seul sur une nouvelle ligne, au format EXACT (une seule ligne, aucun espace ni retour à l'intérieur) :
+<<<DRAFT>>>{"client_nom":"...ou null","client_telephone":"...ou null","client_email":"...ou null","type_travaux":"...ou null","lignes":[{"designation":"...","quantite":0,"unite":"...","prix_unitaire":0}],"main_oeuvre":0,"acompte":0}<<<END>>>
+- Ce bloc doit refléter la TOTALITÉ de ce qui est déjà connu du devis à ce stade de la conversation, pas seulement la dernière réponse de l'artisan. Mets null pour chaque champ texte non encore renseigné, [] pour "lignes" tant qu'aucune fourniture n'a été notée, 0 pour "main_oeuvre" et "acompte" non encore renseignés.
+- Le contenu de ce bloc est repris TEL QUEL, plus bas dans ce prompt, sous "ÉTAT ACTUEL DU DEVIS". Pars TOUJOURS de cet état déjà connu et complète-le avec la nouvelle information : ne repars jamais de zéro, ne perds jamais une donnée (nom, téléphone, fourniture déjà notée...) déjà présente dans "ÉTAT ACTUEL DU DEVIS".
+- L'artisan ne voit jamais ce bloc (il est retiré automatiquement avant l'affichage). N'y fais aucune référence dans ta phrase.
+- Ce bloc n'apparaît QUE sur les questions. Sur la réponse finale, ta réponse est UNIQUEMENT le JSON create_devis, rien d'autre (ni bloc <<<DRAFT>>>, ni texte autour).
+
 - Quand le devis est complet et CONFIRMÉ, réponds UNIQUEMENT avec ce JSON EXACT (rien avant, rien après, pas de backticks) :
 {"action":"create_devis","data":{"client_nom":"NOM","client_telephone":"TEL_OU_NULL","client_email":"EMAIL_OU_NULL","type_travaux":"TYPE","lignes":[{"designation":"NOM","quantite":0,"unite":"UNITE","prix_unitaire":0}],"surfaces":[],"main_oeuvre":0,"acompte":0}}
 - Pour les surfaces, calcule longueur × largeur et propose +10% pour chutes
@@ -994,7 +1026,30 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
 
     const data  = await response.json();
     const raw   = data.choices[0].message.content.trim();
-    const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+
+    // ── Bloc mémoire <<<DRAFT>>>...<<<END>>> ─────────────────────
+    // Le prompt système demande à l'IA de terminer chaque QUESTION (jamais la
+    // réponse finale create_devis) par un bloc JSON reflétant TOUT l'état connu
+    // du devis. Ce bloc — pas l'historique brut, plafonné à 20 messages par
+    // safeHistory.slice(-20) — porte la mémoire structurée : on le parse, on le
+    // renvoie au frontend dans `draft`, et on le retire du texte affiché.
+    let draft = null;
+    const draftMatch = raw.match(/<<<DRAFT>>>([\s\S]*?)<<<END>>>/);
+    if (draftMatch) {
+      try {
+        draft = JSON.parse(draftMatch[1].trim());
+      } catch (parseErr) {
+        // Bloc mal formé : on log et on l'ignore, sans jamais faire échouer la route.
+        console.error('[BOT] Bloc <<<DRAFT>>> mal formé, ignoré :', parseErr.message);
+        draft = null;
+      }
+    }
+
+    // Texte visible = réponse brute privée du bloc (et des espaces/retours
+    // autour) ; c'est lui qu'on nettoie du markdown, qu'on affiche et qu'on
+    // analyse pour détecter le JSON create_devis.
+    const rawVisible = raw.replace(/\s*<<<DRAFT>>>[\s\S]*?<<<END>>>\s*/g, '').trim();
+    const clean = rawVisible.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
     let action = null;
     try {
@@ -1010,8 +1065,8 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
       } catch {}
     }
 
-    if (action) return res.json({ reply: '✅ Parfait ! Je génère ton devis...', action });
-    res.json({ reply: clean, action: null });
+    if (action) return res.json({ reply: '✅ Parfait ! Je génère ton devis...', action, draft });
+    res.json({ reply: clean, action: null, draft });
 
   } catch (err) {
     console.error('[BOT]', err);
