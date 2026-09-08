@@ -1027,6 +1027,10 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
     });
 
     const data  = await response.json();
+    if (!data.choices || !data.choices[0]) {
+      console.error('[BOT] Réponse Mistral invalide :', JSON.stringify(data));
+      return res.status(500).json({ error: "Le service de génération de devis a rencontré un problème. Réessaie." });
+    }
     const raw   = data.choices[0].message.content.trim();
 
     // ── Bloc mémoire <<<DRAFT>>>...<<<END>>> ─────────────────────
