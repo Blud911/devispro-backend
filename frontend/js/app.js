@@ -144,6 +144,17 @@ function showUpgradeMessage() {
   setQuickReplies(['Contacter via WhatsApp']);
 }
 
+// ── CONTACT ADMIN WHATSAPP ────────────────────────────────────
+// Mécanique partagée : bouton quota (plan gratuit épuisé) ET bouton
+// "Renouveler mon abonnement" (plans payants) ouvrent le même wa.me vers le
+// numéro admin (window.DEVISPRO_ADMIN_WHATSAPP, défini dans config.js) avec un
+// message pré-rempli. Avant, le bouton quota pointait vers un placeholder
+// littéral `wa.me/[TON_NUMERO]?text=STARTER` — lien mort.
+function contacterAdminWhatsApp(message) {
+  const texte = encodeURIComponent(message);
+  window.open(`https://wa.me/${window.DEVISPRO_ADMIN_WHATSAPP}?text=${texte}`, '_blank');
+}
+
 // ── CHAT UI ────────────────────────────────────────────────────
 function appendMessage(role, text, extra) {
   const chat    = document.getElementById('chat');
@@ -204,7 +215,15 @@ function setQuickReplies(options) {
     const btn = document.createElement('button');
     btn.className = 'qr-btn'; btn.textContent = opt;
     btn.onclick = () => {
-      if (opt === 'Contacter via WhatsApp') { window.open('https://wa.me/[TON_NUMERO]?text=STARTER', '_blank'); return; }
+      if (opt === 'Contacter via WhatsApp') {
+        const stored = localStorage.getItem('dp_artisan');
+        const a      = stored ? JSON.parse(stored) : null;
+        const message = a
+          ? `Bonjour, je souhaite m'abonner au plan Starter sur DevisPro CI. Nom : ${a.nom}, Téléphone : ${a.telephone}.`
+          : "Bonjour, je souhaite m'abonner au plan Starter sur DevisPro CI.";
+        contacterAdminWhatsApp(message);
+        return;
+      }
       setInput(opt); sendMessage();
     };
     qr.appendChild(btn);
@@ -599,6 +618,13 @@ async function loadProfilScreen() {
     } else {
       expRow.style.display = 'none';
     }
+
+    // Bouton "Renouveler mon abonnement" : uniquement pour les plans payants
+    // (starter/pro). Le plan gratuit n'a pas d'abonnement à renouveler — juste
+    // un quota à dépasser, déjà couvert par le bouton "Contacter via WhatsApp"
+    // côté quota.
+    const renewBtn = document.getElementById('profil-renew-btn');
+    if (renewBtn) renewBtn.style.display = p.plan && p.plan !== 'gratuit' ? '' : 'none';
   } catch (err) {
     if (msg) {
       msg.textContent   = 'Impossible de charger le profil. Réessaie.';
@@ -655,6 +681,19 @@ async function saveProfil() {
   } finally {
     btn.disabled = false; btn.textContent = label;
   }
+}
+
+// ── RENOUVELLEMENT D'ABONNEMENT (plans payants) ───────────────
+// Réutilise contacterAdminWhatsApp() — même mécanique que le bouton quota,
+// message adapté au renouvellement. Message de secours générique si l'artisan
+// stocké est indisponible, plutôt que de planter.
+function renouvelerAbonnement() {
+  const stored = localStorage.getItem('dp_artisan');
+  const a = stored ? JSON.parse(stored) : null;
+  const message = a
+    ? `Bonjour, je souhaite renouveler mon abonnement DevisPro CI. Nom : ${a.nom}, Téléphone : ${a.telephone}, Plan actuel : ${a.plan}.`
+    : "Bonjour, je souhaite renouveler mon abonnement DevisPro CI.";
+  contacterAdminWhatsApp(message);
 }
 
 function logout() {
