@@ -305,11 +305,17 @@ function buildDevisPDF({ artisan, numero, numero_facture, reference_bien, client
     doc.fontSize(10).font('Helvetica')
        .text(`${artisan.nom} ${artisan.prenom || ''} — ${artisan.metier}`, 50, 48)
        .text(`Tél : ${artisan.telephone}`, 50, 62);
-    doc.fillColor(GOLD).fontSize(10).font('Helvetica-Bold')
+    // fontSize 9 (et non 10) pour cette ligne uniquement : "FACTURE FACT-xxxxxxxxxxxxx"
+    // fait ~137,5 pt en Helvetica-Bold 9 (calcul de largeur de glyphes AFM) et tient
+    // donc sur une seule ligne dans les 145 px ; à fontSize 10 il faisait ~152,8 pt et
+    // débordait sur deux lignes, chevauchant "Date : ...". Date/Validité décalés de
+    // 2 px vers le bas pour garder de la marge même si le texte du dessus repassait
+    // un jour sur deux lignes.
+    doc.fillColor(GOLD).fontSize(9).font('Helvetica-Bold')
        .text(`${typeDoc} ${numeroAffiche}`, 400, 30, { align: 'right', width: 145 });
     doc.fillColor(WHITE).font('Helvetica').fontSize(9)
-       .text(`Date : ${new Date().toLocaleDateString('fr-FR')}`, 400, 48, { align: 'right', width: 145 })
-       .text('Validité : 30 jours', 400, 62, { align: 'right', width: 145 });
+       .text(`Date : ${new Date().toLocaleDateString('fr-FR')}`, 400, 50, { align: 'right', width: 145 })
+       .text('Validité : 30 jours', 400, 64, { align: 'right', width: 145 });
 
     // ── Bloc client ───────────────────────────────────────────
     doc.rect(50, 105, pageW, 60).fill(GRAY);
