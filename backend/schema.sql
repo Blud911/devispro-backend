@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS artisans (
   logo_url       TEXT,
   plan           VARCHAR(20) DEFAULT 'gratuit',  -- gratuit | starter | pro
   devis_count    INTEGER DEFAULT 0,
+  facture_count  INTEGER DEFAULT 0,      -- quota facture séparé : plan gratuit = 5 devis + 5 factures
   created_at     TIMESTAMP DEFAULT NOW()
 );
 
@@ -69,3 +70,4 @@ ALTER TABLE artisans ADD COLUMN IF NOT EXISTS nom_entreprise VARCHAR(150);
 ALTER TABLE devis ADD COLUMN IF NOT EXISTS numero_facture VARCHAR(50);
 ALTER TABLE devis ADD COLUMN IF NOT EXISTS facture_generee_le TIMESTAMP;
 ALTER TABLE devis ADD COLUMN IF NOT EXISTS reference_bien VARCHAR(150);
+ALTER TABLE artisans ADD COLUMN IF NOT EXISTS facture_count INTEGER DEFAULT 0;

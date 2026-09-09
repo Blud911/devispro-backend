@@ -583,7 +583,7 @@ app.post('/api/auth/activate', authLimiter, authMiddleware, async (req, res) => 
 app.get('/api/profil', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT id, nom, prenom, telephone, metier, nom_entreprise, email, logo_url, devis_count, plan, statut, expires_at FROM artisans WHERE id=$1',
+      'SELECT id, nom, prenom, telephone, metier, nom_entreprise, email, logo_url, devis_count, facture_count, plan, statut, expires_at FROM artisans WHERE id=$1',
       [req.user.id]
     );
     const artisan = result.rows[0];
@@ -666,7 +666,7 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
     if (artisan.statut === 'suspendu') {
       return res.status(403).json({ error: "Votre abonnement a expiré. Contactez l'administrateur." });
     }
-    if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
+    if (artisan.plan === 'gratuit' && artisan.devis_count >= 5) {
       return res.status(403).json({ error: 'Quota gratuit atteint.', quota_depasse: true });
     }
 
@@ -822,6 +822,11 @@ app.post('/api/devis/:id/share', authMiddleware, async (req, res) => {
 // numero_facture (`FACT-${Date.now()}`, même convention que `DEV-${Date.now()}`
 // pour numero). Idempotent : si le devis a DÉJÀ un numero_facture, on renvoie
 // l'existant sans rien régénérer — un double-clic ne crée jamais deux numéros.
+//
+// Quota facture (plan gratuit) : le plan gratuit donne 5 devis + 5 factures,
+// chaque quota compté séparément (artisans.devis_count / artisans.facture_count).
+// Une conversion devis→facture consomme UNIQUEMENT le quota facture — le quota
+// devis a déjà été débité à la création du devis, on ne le redébite pas.
 app.put('/api/devis/:id/marquer-paye', authMiddleware, async (req, res) => {
   try {
     const devisResult = await pool.query(
@@ -831,11 +836,29 @@ app.put('/api/devis/:id/marquer-paye', authMiddleware, async (req, res) => {
     if (!devisResult.rows.length) return res.status(404).json({ error: 'Devis introuvable' });
 
     const devis = devisResult.rows[0];
+    // Cas idempotent : un devis DÉJÀ facturé renvoie son numéro existant sans
+    // rien régénérer NI toucher au quota. On sort ici AVANT tout contrôle de
+    // quota et AVANT l'incrément facture_count plus bas — donc un second clic
+    // sur "Marquer payé" ne peut jamais double-incrémenter le compteur.
     if (devis.numero_facture) {
       return res.json({
         numero_facture:     devis.numero_facture,
         facture_generee_le: devis.facture_generee_le
       });
+    }
+
+    // Contrôles artisan (uniquement pour une PREMIÈRE conversion) : compte
+    // suspendu → 403 (cohérence avec les autres routes) ; quota facture gratuit
+    // épuisé → 403 avec la même structure que quota_depasse (devis).
+    const artisanResult = await pool.query(
+      'SELECT plan, statut, facture_count FROM artisans WHERE id=$1', [req.user.id]
+    );
+    const artisan = artisanResult.rows[0];
+    if (artisan.statut === 'suspendu') {
+      return res.status(403).json({ error: "Votre abonnement a expiré. Contactez l'administrateur." });
+    }
+    if (artisan.plan === 'gratuit' && artisan.facture_count >= 5) {
+      return res.status(403).json({ error: 'Quota factures gratuit atteint.', quota_facture_depasse: true });
     }
 
     const numeroFacture = `FACT-${Date.now()}`;
@@ -845,6 +868,12 @@ app.put('/api/devis/:id/marquer-paye', authMiddleware, async (req, res) => {
        RETURNING numero_facture, facture_generee_le`,
       [numeroFacture, req.params.id, req.user.id]
     );
+
+    // Incrément du quota facture : atteint UNIQUEMENT ici, c.-à-d. à la
+    // première conversion réussie du devis (le retour idempotent ci-dessus
+    // court-circuite tout appel ultérieur sur un devis déjà facturé).
+    await pool.query('UPDATE artisans SET facture_count = facture_count + 1 WHERE id=$1', [req.user.id]);
+
     res.json({
       numero_facture:     updateResult.rows[0].numero_facture,
       facture_generee_le: updateResult.rows[0].facture_generee_le
@@ -1064,16 +1093,16 @@ app.post('/api/bot/message', authMiddleware, async (req, res) => {
     if (artisan.statut === 'suspendu') {
       return res.status(403).json({ error: "Votre abonnement a expiré. Contactez l'administrateur." });
     }
-    if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
+    if (artisan.plan === 'gratuit' && artisan.devis_count >= 5) {
       return res.json({
-        reply: `🔒 Vous avez utilisé vos 3 devis gratuits.\n\nPour continuer, abonnez-vous au plan Starter à 1 000 FCFA/mois.\n\nEnvoyez le paiement via Wave CI ou Orange Money au ${PAYMENT_NUMBER}, puis contactez l'administrateur par WhatsApp.`,
+        reply: `🔒 Vous avez utilisé vos 5 devis gratuits.\n\nPour continuer, abonnez-vous au plan Starter à 2 000 FCFA/mois.\n\nEnvoyez le paiement via Wave CI ou Orange Money au ${PAYMENT_NUMBER}, puis contactez l'administrateur par WhatsApp.`,
         action: null,
         quota_depasse: true
       });
     }
 
     const devisRestants = artisan.plan === 'gratuit'
-      ? ` [${3 - artisan.devis_count} devis gratuit${3 - artisan.devis_count > 1 ? 's' : ''} restant${3 - artisan.devis_count > 1 ? 's' : ''}]`
+      ? ` [${5 - artisan.devis_count} devis gratuit${5 - artisan.devis_count > 1 ? 's' : ''} restant${5 - artisan.devis_count > 1 ? 's' : ''}]`
       : '';
 
     const systemPrompt = `Tu es DevisPro, un assistant pour artisans en Côte d'Ivoire.

@@ -108,7 +108,7 @@ function showApp(artisan) {
   document.getElementById('activation-screen').style.display = 'none';
   document.getElementById('app').style.display               = 'flex';
   document.getElementById('header-sub').textContent = `Bonjour, ${artisan.nom} 👋`;
-  if (artisan.plan === 'gratuit') showQuotaBanner(Math.max(0, 3 - (artisan.devis_count || 0)));
+  if (artisan.plan === 'gratuit') showQuotaBanner(Math.max(0, 5 - (artisan.devis_count || 0)));
 
   // Analyse photo réservée aux métiers bâtiment/surface : le backend renvoie
   // photo_disponible === false pour les autres (mécanique auto, électroménager…).
@@ -129,7 +129,7 @@ function showQuotaBanner(restants) {
   const banner = document.getElementById('quota-banner');
   if (!banner) return;
   if (restants === 0) {
-    banner.innerHTML        = `🔒 Vos 3 devis gratuits sont utilisés. <a href="#" onclick="showUpgradeMessage()" style="color:var(--gold);font-weight:700;">S'abonner →</a>`;
+    banner.innerHTML        = `🔒 Vos 5 devis gratuits sont utilisés. <a href="#" onclick="showUpgradeMessage()" style="color:var(--gold);font-weight:700;">S'abonner →</a>`;
     banner.style.background = '#FED7D7'; banner.style.color = '#C53030';
   } else {
     banner.innerHTML        = `⚡ Plan gratuit : ${restants} devis restant${restants > 1 ? 's' : ''}`;
@@ -140,7 +140,7 @@ function showQuotaBanner(restants) {
 }
 
 function showUpgradeMessage() {
-  appendMessage('bot', `Pour continuer, abonne-toi au plan Starter à 1 000 FCFA/mois.\n\nEnvoie le paiement via Wave CI ou Orange Money au ${window.DEVISPRO_PAYMENT_NUMBER}, puis clique ci-dessous pour prévenir l'administrateur.`);
+  appendMessage('bot', `Pour continuer, abonne-toi au plan Starter à 2 000 FCFA/mois.\n\nEnvoie le paiement via Wave CI ou Orange Money au ${window.DEVISPRO_PAYMENT_NUMBER}, puis clique ci-dessous pour prévenir l'administrateur.`);
   setQuickReplies(['Contacter via WhatsApp']);
 }
 
@@ -315,8 +315,8 @@ function newDevis() {
   const stored = localStorage.getItem('dp_artisan');
   if (stored) {
     const a = JSON.parse(stored);
-    if (a.plan === 'gratuit' && a.devis_count >= 3) {
-      appendMessage('bot', "Vous avez utilisé vos 3 devis gratuits. Abonnez-vous pour continuer.");
+    if (a.plan === 'gratuit' && a.devis_count >= 5) {
+      appendMessage('bot', "Vous avez utilisé vos 5 devis gratuits. Abonnez-vous pour continuer.");
       setQuickReplies(['Contacter via WhatsApp']); return;
     }
   }
@@ -442,7 +442,7 @@ async function creerDevisEtAfficher(payload) {
       const a = JSON.parse(stored);
       a.devis_count = (a.devis_count || 0) + 1;
       localStorage.setItem('dp_artisan', JSON.stringify(a));
-      if (a.plan === 'gratuit') showQuotaBanner(Math.max(0, 3 - a.devis_count));
+      if (a.plan === 'gratuit') showQuotaBanner(Math.max(0, 5 - a.devis_count));
     }
     appendMessage('bot', '', {
       type:     'devis-card',
@@ -492,7 +492,7 @@ function showTab(tab) {
     const stored = localStorage.getItem('dp_artisan');
     if (stored) {
       const a = JSON.parse(stored);
-      if (a.plan === 'gratuit') showQuotaBanner(Math.max(0, 3 - (a.devis_count || 0)));
+      if (a.plan === 'gratuit') showQuotaBanner(Math.max(0, 5 - (a.devis_count || 0)));
     }
   }
 
@@ -584,6 +584,26 @@ async function marquerPaye(devisId) {
     await loadDevisScreen();
   } catch (err) {
     if (list) list.style.opacity = '';
+    // Quota factures gratuit épuisé (5/5) : même traitement que le quota devis
+    // — on propose le contact WhatsApp admin (contacterAdminWhatsApp, réutilisée)
+    // plutôt qu'une alerte sèche. err.data porte le corps JSON renvoyé par le
+    // backend (cf. api.js : request() attache data à l'erreur).
+    if (err.data && err.data.quota_facture_depasse) {
+      const stored = localStorage.getItem('dp_artisan');
+      const a = stored ? JSON.parse(stored) : null;
+      const ok = confirm(
+        "Tu as utilisé tes 5 factures gratuites.\n\n" +
+        `Pour continuer, abonne-toi au plan Starter à 2 000 FCFA/mois (paiement Wave CI / Orange Money au ${window.DEVISPRO_PAYMENT_NUMBER}).\n\n` +
+        "Ouvrir WhatsApp pour prévenir l'administrateur ?"
+      );
+      if (ok) {
+        const message = a
+          ? `Bonjour, je souhaite m'abonner au plan Starter sur DevisPro CI. Nom : ${a.nom}, Téléphone : ${a.telephone}.`
+          : "Bonjour, je souhaite m'abonner au plan Starter sur DevisPro CI.";
+        contacterAdminWhatsApp(message);
+      }
+      return;
+    }
     alert(`Impossible de marquer ce devis comme payé : ${err.message}`);
   }
 }
@@ -606,7 +626,7 @@ async function loadProfilScreen() {
     const quotaRow = document.getElementById('profil-quota-row');
     if (p.plan === 'gratuit') {
       quotaRow.style.display = 'flex';
-      document.getElementById('profil-quota').textContent = `${p.devis_count || 0}/3 devis utilisés`;
+      document.getElementById('profil-quota').textContent = `${p.devis_count || 0}/5 devis · ${p.facture_count || 0}/5 factures`;
     } else {
       quotaRow.style.display = 'none';
     }
@@ -634,7 +654,7 @@ async function loadProfilScreen() {
 
     // Bouton "S'abonner au plan Starter" : logique inverse du bouton
     // "Renouveler" ci-dessus — réservé au plan gratuit, pour permettre à
-    // l'artisan de s'abonner AVANT d'avoir épuisé ses 3 devis (le bouton quota
+    // l'artisan de s'abonner AVANT d'avoir épuisé ses 5 devis (le bouton quota
     // du chat n'apparaît qu'une fois le quota totalement consommé). Les deux
     // boutons ne sont jamais visibles ensemble : estGratuit est la négation
     // stricte de estPayant.
@@ -720,7 +740,7 @@ function renouvelerAbonnement() {
 // ── ABONNEMENT INITIAL (plan gratuit) ────────────────────────
 // Même mécanique que renouvelerAbonnement() (réutilise contacterAdminWhatsApp),
 // message adapté à une première souscription. Permet à l'artisan de s'abonner
-// depuis l'écran Profil sans attendre d'avoir consommé ses 3 devis gratuits.
+// depuis l'écran Profil sans attendre d'avoir consommé ses 5 devis gratuits.
 function sabonner() {
   const stored = localStorage.getItem('dp_artisan');
   const a = stored ? JSON.parse(stored) : null;
