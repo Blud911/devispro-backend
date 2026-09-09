@@ -631,6 +631,21 @@ async function loadProfilScreen() {
       renewInfo.style.display = estPayant ? '' : 'none';
       renewInfo.textContent   = `Paiement via Wave CI / Orange Money : ${window.DEVISPRO_PAYMENT_NUMBER}`;
     }
+
+    // Bouton "S'abonner au plan Starter" : logique inverse du bouton
+    // "Renouveler" ci-dessus — réservé au plan gratuit, pour permettre à
+    // l'artisan de s'abonner AVANT d'avoir épuisé ses 3 devis (le bouton quota
+    // du chat n'apparaît qu'une fois le quota totalement consommé). Les deux
+    // boutons ne sont jamais visibles ensemble : estGratuit est la négation
+    // stricte de estPayant.
+    const subscribeBtn  = document.getElementById('profil-subscribe-btn');
+    const subscribeInfo = document.getElementById('profil-subscribe-info');
+    const estGratuit    = !p.plan || p.plan === 'gratuit';
+    if (subscribeBtn)  subscribeBtn.style.display  = estGratuit ? '' : 'none';
+    if (subscribeInfo) {
+      subscribeInfo.style.display = estGratuit ? '' : 'none';
+      subscribeInfo.textContent   = `Paiement via Wave CI / Orange Money : ${window.DEVISPRO_PAYMENT_NUMBER}`;
+    }
   } catch (err) {
     if (msg) {
       msg.textContent   = 'Impossible de charger le profil. Réessaie.';
@@ -699,6 +714,19 @@ function renouvelerAbonnement() {
   const message = a
     ? `Bonjour, je souhaite renouveler mon abonnement DevisPro CI. Nom : ${a.nom}, Téléphone : ${a.telephone}, Plan actuel : ${a.plan}.`
     : "Bonjour, je souhaite renouveler mon abonnement DevisPro CI.";
+  contacterAdminWhatsApp(message);
+}
+
+// ── ABONNEMENT INITIAL (plan gratuit) ────────────────────────
+// Même mécanique que renouvelerAbonnement() (réutilise contacterAdminWhatsApp),
+// message adapté à une première souscription. Permet à l'artisan de s'abonner
+// depuis l'écran Profil sans attendre d'avoir consommé ses 3 devis gratuits.
+function sabonner() {
+  const stored = localStorage.getItem('dp_artisan');
+  const a = stored ? JSON.parse(stored) : null;
+  const message = a
+    ? `Bonjour, je souhaite m'abonner au plan Starter sur DevisPro CI. Nom : ${a.nom}, Téléphone : ${a.telephone}.`
+    : "Bonjour, je souhaite m'abonner au plan Starter sur DevisPro CI.";
   contacterAdminWhatsApp(message);
 }
 
