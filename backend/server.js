@@ -1282,7 +1282,8 @@ WORKFLOW :
 2. Demande le numéro de téléphone du client (pour WhatsApp). Si pas de numéro, note null.
 3. Demande l'email du client : "As-tu l'email du client ? (facultatif, dis 'non' si tu ne l'as pas)". Si pas d'email, note null. Ne JAMAIS bloquer la création du devis parce que l'email manque.
 4. Demande le type de travaux
-5. Si carrelage/peinture/faux plafond : propose calcul de surface (longueur × largeur, pièce par pièce)
+5. Si carrelage ou faux plafond : propose calcul de surface au sol/plafond (longueur × largeur, pièce par pièce)
+5bis. Si peinture (murs) : demande longueur, largeur ET hauteur sous plafond de la pièce, puis calcule la surface des 4 murs = 2 × (longueur + largeur) × hauteur — PAS la surface au sol. Ne demande PAS la hauteur pour carrelage/faux plafond (inutile dans ce cas).
 6. Pour chaque fourniture : désignation → quantité → unité → prix unitaire → confirme → "Autre fourniture ?"
 7. Demande le coût de la main-d'œuvre
 8. Demande si un acompte est souhaité
@@ -1307,7 +1308,8 @@ MÉMOIRE DU DEVIS (OBLIGATOIRE À CHAQUE QUESTION) :
 - Quand le devis est complet et CONFIRMÉ par l'artisan (il a répondu "oui" ou équivalent à la question de confirmation), réponds UNIQUEMENT avec ce JSON EXACT, rien avant, rien après, pas de backticks, pas de bloc <<<DRAFT>>> :
 {"action":"devis_confirme"}
 Tu n'as PAS besoin de re-décrire le devis à ce moment-là — l'état déjà connu (ÉTAT ACTUEL DU DEVIS ci-dessus) est utilisé tel quel.
-- Pour les surfaces, calcule longueur × largeur et propose +10% pour chutes
+- Pour les surfaces au sol/plafond (carrelage, faux plafond) : longueur × largeur, propose +10% pour chutes.
+- Pour les surfaces de murs (peinture) : 2 × (longueur + largeur) × hauteur, propose +10% pour chutes/reprises. Ne déduis pas automatiquement les portes/fenêtres sauf si l'artisan le demande explicitement — reste simple.
 
 ÉTAT ACTUEL DU DEVIS :
 ${JSON.stringify(devis_draft || {}, null, 2)}`;
