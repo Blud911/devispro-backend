@@ -17,13 +17,17 @@ const { v4: uuidv4 } = require('uuid');
 const fs             = require('fs');
 const path           = require('path');
 const multer         = require('multer');
+const crypto         = require('crypto');
 
 // ── Vérification des secrets critiques au démarrage ─────────────
 // [FIX #2 - 27/07/2026] Plus AUCUN fallback en dur pour ADMIN_PASSWORD :
 // avant, `ADMIN_PASSWORD || 'devispro_admin_2026'` donnait un accès admin
 // avec un mot de passe public (visible dans le repo GitHub) si la variable
 // d'env était absente. Maintenant le serveur refuse de démarrer.
-const REQUIRED_ENV = ['JWT_SECRET', 'ADMIN_PASSWORD', 'DATABASE_URL', 'MISTRAL_API_KEY'];
+// [É-1] FRONTEND_URL est un contrôle de sécurité (liste blanche CORS) : son
+// absence ouvrait silencieusement l'API à TOUTES les origines. Désormais
+// obligatoire — le serveur refuse de démarrer sans.
+const REQUIRED_ENV = ['JWT_SECRET', 'ADMIN_PASSWORD', 'DATABASE_URL', 'MISTRAL_API_KEY', 'FRONTEND_URL'];
 const missingEnv   = REQUIRED_ENV.filter(k => !process.env[k]);
 if (missingEnv.length > 0) {
   console.error(`[BOOT] Variables d'environnement manquantes : ${missingEnv.join(', ')}`);
@@ -33,6 +37,20 @@ if (missingEnv.length > 0) {
 
 // ── App ────────────────────────────────────────────────────────
 const app         = express();
+
+// [É-2] Rate limiting derrière le proxy d'hébergement.
+// Sans `trust proxy`, req.ip vaut l'IP du proxy (identique pour tous les
+// clients) → chaque limiteur devient un seau global partagé (un seul client, ou
+// un pic de trafic légitime, bloque toute l'API) et le bruteforce par IP réelle
+// n'est jamais mesuré.
+// Chaîne d'hébergement DevisPro CI : l'API est servie DIRECTEMENT sur
+// *.onrender.com — il n'y a PAS de Cloudflare devant l'API (seul le FRONTEND est
+// sur Cloudflare Workers, cf. frontend/js/config.js / frontend/wrangler.json).
+// Render place 1 seul proxy devant l'app, qui renseigne X-Forwarded-For. Donc
+// 1 hop — et NON 3 comme le correctif CashFlow Pro (dont l'API passe, elle, par
+// un domaine proxifié Cloudflare + LB Render + socket peer).
+app.set('trust proxy', 1);
+
 const PORT        = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || 'https://blud911-devispro-backend.onrender.com';
 
@@ -46,12 +64,42 @@ function fcfa(n) {
   return String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
+// ── Échappement HTML ───────────────────────────────────────────
+// [É-3] Neutralise toute donnée utilisateur (nom du client, nom/métier/tél de
+// l'artisan…) avant insertion dans du HTML — utilisé pour le corps des emails
+// Brevo envoyés au client final.
+function escapeHtml(val) {
+  return String(val == null ? '' : val)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ── Comparaison de secret à temps constant ─────────────────────
+// [M-4] crypto.timingSafeEqual exige deux buffers de MÊME longueur ; on gère le
+// cas des longueurs différentes sans court-circuit qui révélerait le préfixe
+// correct via le temps de réponse.
+function safeEqualStr(a, b) {
+  const bufA = Buffer.from(String(a == null ? '' : a), 'utf8');
+  const bufB = Buffer.from(String(b == null ? '' : b), 'utf8');
+  if (bufA.length !== bufB.length) {
+    crypto.timingSafeEqual(bufA, bufA); // travail bidon, temps comparable
+    return false;
+  }
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
 // ── Code partage court ─────────────────────────────────────────
 // ✅ v4.5 : 8 caractères alphanumériques lisibles
+// [M-2] Tirage cryptographique (crypto.randomInt) : Math.random() est un PRNG
+// non cryptographique dont l'état se reconstruit à partir de quelques sorties,
+// rendant les codes suivants prédictibles (accès à des devis tiers via /d/:code).
 function makeShareCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
-  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 8; i++) code += chars[crypto.randomInt(chars.length)];
   return code;
 }
 
@@ -73,9 +121,10 @@ app.use(cors({
     // Requêtes sans origine (Postman, curl, apps mobiles) : autorisées côté serveur,
     // la vraie protection est le token JWT sur chaque route.
     if (!origin) return callback(null, true);
-    if (allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
+    // [É-1] Plus de fail-open : on ne teste QUE l'appartenance à la liste
+    // blanche (FRONTEND_URL, désormais obligatoire au démarrage). Une liste vide
+    // n'autorise plus « toutes les origines ».
+    if (allowedOrigins.includes(origin)) return callback(null, true);
     return callback(new Error('Origine non autorisée par CORS'));
   }
 }));
@@ -112,6 +161,29 @@ const emailLimiter = rateLimit({
   legacyHeaders: false
 });
 
+// [M-6] Limiteur dédié à l'analyse photo (Pixtral, appel coûteux). Sans lui,
+// seul le limiteur global s'applique à cette route. Clé = id artisan (le
+// middleware doit tourner APRÈS authMiddleware), repli sur l'IP réelle.
+const photoLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 15,
+  message: { error: "Trop d'analyses photo. Réessaie dans 10 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.user && req.user.id) || req.ip
+});
+
+// [M-3] Limiteur dédié au lien de partage public /d/:code : cette route est hors
+// du préfixe /api/, donc le limiteur global ne la couvre pas. Chaque appel
+// déclenche une génération PDF (CPU) et expose des PII client via le PDF.
+const shareLinkLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: 'Trop de requêtes, réessaie dans 15 minutes.',
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
 // ── Variables d'environnement optionnelles (envoi email via Brevo) ──────
 // La fonctionnalité "envoyer le devis par email" reste DÉSACTIVÉE tant que
 // BREVO_API_KEY n'est pas définie — le serveur démarre normalement sans.
@@ -122,10 +194,42 @@ const emailLimiter = rateLimit({
 // ── PostgreSQL ─────────────────────────────────────────────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false
+  // [M-1] Vérification du certificat serveur activée : Neon présente une chaîne
+  // de confiance publique standard. `rejectUnauthorized: false` acceptait un
+  // certificat forgé (MITM sur le lien Render↔Neon → interception des
+  // identifiants DB, hashes, devis clients).
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: true } : false
 });
 
 // ── Multer ─────────────────────────────────────────────────────
+// [É-4] Validation d'upload renforcée. AVANT : seul file.mimetype (le
+// Content-Type de la partie multipart, FOURNI PAR LE CLIENT donc falsifiable)
+// était vérifié, et l'extension de sortie était copiée de file.originalname
+// (client aussi). Un attaquant authentifié pouvait donc stocker un `.html`
+// servi en `text/html` sur l'origine du backend. MAINTENANT :
+//   1. mimetype ET extension réelle du nom doivent être dans la liste blanche ;
+//   2. l'extension de sortie est dérivée du type MIME (jamais du nom fourni) ;
+//   3. le contenu réel est confirmé par lecture des « magic bytes » après
+//      écriture (voir route /api/profil/logo) — multer n'expose pas le contenu
+//      dans fileFilter, appelé avant lecture du flux.
+const ALLOWED_LOGO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const ALLOWED_LOGO_EXT   = ['.jpg', '.jpeg', '.png', '.webp'];
+const MIME_TO_EXT        = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+
+// detectImageType : renvoie le type MIME réel d'après les premiers octets du
+// fichier, ou null si ce n'est ni un JPEG, ni un PNG, ni un WebP.
+function detectImageType(buf) {
+  if (buf.length >= 3 &&
+      buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return 'image/jpeg';
+  if (buf.length >= 8 &&
+      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47 &&
+      buf[4] === 0x0D && buf[5] === 0x0A && buf[6] === 0x1A && buf[7] === 0x0A) return 'image/png';
+  if (buf.length >= 12 &&
+      buf.toString('ascii', 0, 4) === 'RIFF' &&
+      buf.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const dir = path.join(__dirname, 'uploads');
@@ -133,18 +237,16 @@ const storage = multer.diskStorage({
     cb(null, dir);
   },
   filename: (req, file, cb) => {
-    cb(null, `${uuidv4()}${path.extname(file.originalname)}`);
+    // Extension dérivée du type MIME déclaré, jamais de file.originalname.
+    cb(null, `${uuidv4()}${MIME_TO_EXT[file.mimetype] || '.bin'}`);
   }
 });
-// [FIX #4 - 27/07/2026] fileFilter ajouté : avant, n'importe quel type de fichier
-// pouvait être uploadé comme logo (script, HTML, exécutable déguisé). Maintenant,
-// seuls les types image courants sont acceptés.
-const ALLOWED_LOGO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const upload = multer({
   storage,
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    if (!ALLOWED_LOGO_TYPES.includes(file.mimetype)) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (!ALLOWED_LOGO_TYPES.includes(file.mimetype) || !ALLOWED_LOGO_EXT.includes(ext)) {
       return cb(new Error('Type de fichier non autorisé (jpeg, png, webp uniquement)'));
     }
     cb(null, true);
@@ -156,7 +258,12 @@ const upload = multer({
 // ⚠️ Le disque Render est éphémère (perdu à chaque redeploy/restart) : correct pour
 // débloquer la fonctionnalité tout de suite, mais un stockage externe (Cloudflare R2,
 // S3...) serait plus fiable à moyen terme si les logos doivent survivre aux déploiements.
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// [É-4] `nosniff` explicite sur les fichiers uploadés : empêche le navigateur de
+// « renifler » un type autre que celui déclaré (défense en profondeur, en plus
+// de la validation magic bytes à l'écriture).
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res) => res.setHeader('X-Content-Type-Options', 'nosniff')
+}));
 
 // ── Auth middleware ────────────────────────────────────────────
 function authMiddleware(req, res, next) {
@@ -221,10 +328,13 @@ function adminAuth(req, res, next) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────
+// [M-2] Tirage cryptographique (crypto.randomInt) au lieu de Math.random() :
+// un code d'activation prédictible = activation d'un compte sans passer par
+// l'administrateur.
 function makeActivationCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = 'DEV';
-  for (let i = 0; i < 5; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  for (let i = 0; i < 5; i++) code += chars[crypto.randomInt(chars.length)];
   return code;
 }
 
@@ -475,7 +585,22 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
       token:   tempToken
     });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'Ce numéro est déjà inscrit' });
+    // [M-5] Anti-énumération de comptes : NE PAS révéler qu'un numéro est déjà
+    // pris. On renvoie exactement la même réponse que pour une inscription
+    // réussie (même statut 201, même message, même forme avec un token) — mais
+    // ce token porte un id ALÉATOIRE, pas celui du compte existant : sinon un
+    // attaquant s'inscrivant avec le numéro d'un tiers récupérerait une session
+    // valide sur le compte de ce tiers. Ce token « leurre » ne permet aucune
+    // action utile — /api/auth/activate vérifie désormais que l'artisan existe
+    // et répond de façon générique sinon.
+    if (err.code === '23505') {
+      const decoyToken = jwt.sign({ id: uuidv4() }, process.env.JWT_SECRET, { expiresIn: '7d' });
+      return res.status(201).json({
+        message: "Inscription reçue. Entrez votre code d'activation.",
+        statut:  'en_attente',
+        token:   decoyToken
+      });
+    }
     console.error(err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
@@ -542,6 +667,14 @@ app.post('/api/auth/activate', authLimiter, authMiddleware, async (req, res) => 
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'Code manquant' });
   try {
+    // [M-5] Le compte doit exister. Un token « leurre » émis par /register sur
+    // un numéro déjà pris porte un id aléatoire : on répond alors comme pour un
+    // code inconnu, sans jamais confirmer/infirmer l'existence du compte.
+    const artisanCheck = await pool.query('SELECT id FROM artisans WHERE id=$1', [req.user.id]);
+    if (!artisanCheck.rows.length) {
+      return res.status(400).json({ error: 'Code invalide ou déjà utilisé' });
+    }
+
     const codeResult = await pool.query(
       'SELECT * FROM activation_codes WHERE code=$1 AND used=false',
       [code.toUpperCase().trim()]
@@ -624,6 +757,24 @@ app.put('/api/profil', authMiddleware, async (req, res) => {
 
 app.post('/api/profil/logo', authMiddleware, upload.single('logo'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Aucun fichier reçu' });
+
+  // [É-4] Confirmation du type réel par les magic bytes du fichier écrit : le
+  // Content-Type et l'extension sont fournis par le client et falsifiables. Si
+  // le contenu n'est pas un JPEG/PNG/WebP, on supprime le fichier et on refuse.
+  try {
+    const fd  = fs.openSync(req.file.path, 'r');
+    const buf = Buffer.alloc(12);
+    fs.readSync(fd, buf, 0, 12, 0);
+    fs.closeSync(fd);
+    if (!detectImageType(buf)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Fichier image invalide (jpeg, png, webp uniquement)' });
+    }
+  } catch (e) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: 'Impossible de valider le fichier image' });
+  }
+
   const logoUrl = `/uploads/${req.file.filename}`;
   try {
     await pool.query('UPDATE artisans SET logo_url=$1 WHERE id=$2', [logoUrl, req.user.id]);
@@ -727,8 +878,12 @@ app.post('/api/devis', authMiddleware, async (req, res) => {
 });
 
 // GET /api/devis/:id/pdf — PDF privé avec token JWT
+// [L1] Le token n'est plus accepté en query string (il finissait dans les
+// access logs Render/Cloudflare, l'historique du navigateur, les favoris et le
+// Referer). En-tête Authorization uniquement. Le frontend récupère le PDF via
+// fetch + blob (voir frontend/js/api.js : getPdfBlob).
 app.get('/api/devis/:id/pdf', async (req, res) => {
-  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+  const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'Token manquant' });
 
   let userId;
@@ -937,17 +1092,28 @@ app.post('/api/devis/:id/envoyer-email', emailLimiter, authMiddleware, async (re
     });
     const pdfBase64 = pdfBuffer.toString('base64');
 
+    // [É-3] Toute donnée utilisateur (nom du client, nom/métier/tél de
+    // l'artisan, n° de devis) est échappée avant insertion dans le HTML de
+    // l'email : sinon un artisan peut injecter des balises/liens dans le message
+    // reçu par le client (hameçonnage sous l'identité « DevisPro CI »).
+    // textContent est du texte brut (pas de HTML) → pas d'échappement.
+    const eNom     = escapeHtml(devis.client_nom);
+    const eArtisan = escapeHtml(artisanNom);
+    const eMetier  = escapeHtml(artisan.metier);
+    const eTel     = escapeHtml(artisan.telephone);
+    const eNumero  = escapeHtml(devis.numero);
+
     const textContent =
       `Bonjour ${devis.client_nom},\n\n` +
       `Veuillez trouver ci-joint votre devis ${devis.numero} d'un montant de ${totalTxt}.\n\n` +
       `Ce devis est valable 30 jours à compter de sa date d'émission.\n\n` +
       `Cordialement,\n${artisanNom}\n${artisan.metier}\nTél : ${artisan.telephone}`;
     const htmlContent =
-      `<p>Bonjour ${devis.client_nom},</p>` +
-      `<p>Veuillez trouver ci-joint votre devis <strong>${devis.numero}</strong> ` +
+      `<p>Bonjour ${eNom},</p>` +
+      `<p>Veuillez trouver ci-joint votre devis <strong>${eNumero}</strong> ` +
       `d'un montant de <strong>${totalTxt}</strong>.</p>` +
       `<p>Ce devis est valable 30 jours à compter de sa date d'émission.</p>` +
-      `<p>Cordialement,<br>${artisanNom}<br>${artisan.metier}<br>Tél : ${artisan.telephone}</p>`;
+      `<p>Cordialement,<br>${eArtisan}<br>${eMetier}<br>Tél : ${eTel}</p>`;
 
     let brevoRes, brevoData;
     try {
@@ -988,7 +1154,9 @@ app.post('/api/devis/:id/envoyer-email', emailLimiter, authMiddleware, async (re
 });
 
 // ✅ v4.5 : GET /d/:code — lien court public, affiche le PDF
-app.get('/d/:code', async (req, res) => {
+// [M-3] Rate limiter dédié : route hors /api/, donc non couverte par le
+// limiteur global.
+app.get('/d/:code', shareLinkLimiter, async (req, res) => {
   try {
     const partageResult = await pool.query(
       `SELECT dp.*, d.*, a.nom, a.prenom, a.telephone, a.metier, a.nom_entreprise
@@ -1267,7 +1435,7 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
 // ROUTE PHOTO / PIXTRAL
 // ══════════════════════════════════════════════════════════════
 
-app.post('/api/bot/photo', authMiddleware, async (req, res) => {
+app.post('/api/bot/photo', authMiddleware, photoLimiter, async (req, res) => {
   // Défense en profondeur : l'analyse photo n'a de sens que pour les métiers
   // bâtiment/surface. Le bouton est déjà masqué côté frontend pour les autres,
   // mais on refuse aussi ici au cas où la requête serait forgée.
@@ -1286,11 +1454,20 @@ app.post('/api/bot/photo', authMiddleware, async (req, res) => {
   }
 
   const { image } = req.body;
-  if (!image) return res.status(400).json({ error: 'Image manquante' });
+  if (!image || typeof image !== 'string') return res.status(400).json({ error: 'Image manquante' });
 
   const base64Data = image.replace(/^data:image\/[a-z]+;base64,/, '');
   const mimeMatch  = image.match(/^data:(image\/[a-z]+);base64,/);
   const mimeType   = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+  // [M-6] Borne de taille dédiée AVANT tout appel à Pixtral : une photo de
+  // chantier compressée tient largement sous 5 Mo. express.json({ limit: '10mb' })
+  // ne suffit pas — 10 Mo de base64 envoyés en boucle font exploser la facture
+  // Mistral. Taille décodée ≈ longueur base64 × 3/4.
+  const approxBytes = Math.floor(base64Data.length * 0.75);
+  if (approxBytes > 5 * 1024 * 1024) {
+    return res.status(413).json({ error: 'Image trop lourde (5 Mo maximum).' });
+  }
 
   const systemPrompt = `Tu es un assistant pour artisans en Côte d'Ivoire. Analyse l'image et retourne UNIQUEMENT un JSON valide.
 Si PIÈCE : {"type":"piece","piece_detectee":"Salon","dimensions_estimees":{"longueur":4.5,"largeur":3.0},"surface_estimee":13.5,"confiance":"moyenne","notes":"","type_travaux_suggere":"carrelage"}
@@ -1333,7 +1510,12 @@ app.post('/api/admin/login', authLimiter, (req, res) => {
   const { password } = req.body;
   // [FIX #2 - 27/07/2026] Fallback en dur supprimé (ADMIN_PASSWORD est maintenant
   // obligatoire au démarrage, voir vérification en haut du fichier)
-  if (password !== process.env.ADMIN_PASSWORD) return res.status(401).json({ error: 'Mot de passe incorrect' });
+  // [M-4] Comparaison à temps constant : `!==` sur chaîne s'arrête au premier
+  // caractère différent → le temps de réponse fuit la longueur du préfixe
+  // correct. crypto.timingSafeEqual via safeEqualStr().
+  if (typeof password !== 'string' || !safeEqualStr(password, process.env.ADMIN_PASSWORD)) {
+    return res.status(401).json({ error: 'Mot de passe incorrect' });
+  }
   const token = jwt.sign({ admin: true }, process.env.JWT_SECRET, { expiresIn: '8h' });
   res.json({ token });
 });

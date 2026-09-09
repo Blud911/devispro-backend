@@ -59,13 +59,15 @@ const Camera = {
     const chat = document.getElementById('chat');
     const div  = document.createElement('div');
     div.className = 'msg user';
+    // [É-3] `name` = nom de fichier choisi par l'utilisateur → échappé.
+    // echapperHTML / echapperJS sont définis globalement dans app.js.
     div.innerHTML = `
       <div class="msg-avatar">👷</div>
       <div class="msg-bubble" style="padding:6px;">
-        <img src="${url}" alt="${name}"
+        <img src="${echapperHTML(url)}" alt="${echapperHTML(name)}"
           style="max-width:200px;max-height:150px;border-radius:8px;display:block;cursor:pointer;"
-          onclick="window.open('${url}','_blank')">
-        <div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:4px;">📷 ${name}</div>
+          onclick="window.open('${echapperJS(url)}','_blank')">
+        <div style="font-size:11px;color:rgba(255,255,255,0.6);margin-top:4px;">📷 ${echapperHTML(name)}</div>
       </div>`;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;

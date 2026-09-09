@@ -26,6 +26,35 @@ function stripMarkdown(text) {
     .trim();
 }
 
+// ── ÉCHAPPEMENT (anti-XSS stocké — É-3) ──────────────────────
+// echapperHTML : donnée utilisateur (client, numero, statut, nom de fichier…)
+// insérée via innerHTML — texte ou contenu d'attribut à guillemets doubles.
+// echapperJS : donnée utilisateur injectée DANS une chaîne JS elle-même à
+// l'intérieur d'un attribut onclick="fn('...')" — point d'injection distinct :
+// une apostrophe casse la chaîne JS et &#39; y serait re-décodé en ' par le
+// parseur HTML avant exécution. On neutralise le contexte JS (\ ' \r \n) ET le
+// contexte attribut HTML (" & < >), sans jamais produire de ' littéral.
+// Ces deux fonctions sont aussi utilisées par camera.js (portée globale).
+function echapperHTML(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function echapperJS(v) {
+  return String(v == null ? '' : v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // ── AUTH ───────────────────────────────────────────────────────
 function toggleAuthMode() {
   authMode = authMode === 'login' ? 'register' : 'login';
@@ -173,17 +202,17 @@ function appendMessage(role, text, extra) {
     const emailRow    = hasEmail
       ? `<div class="devis-card-actions">
           <button class="card-btn secondary" style="flex:1"
-                  onclick="envoyerParMail('${extra.devis_id}', '${email}', this)">📧 Envoyer par mail</button>
+                  onclick="envoyerParMail('${echapperJS(extra.devis_id)}', '${echapperJS(email)}', this)">📧 Envoyer par mail</button>
         </div>`
       : '';
     bubble.innerHTML = `
       <div class="devis-card">
         <div class="devis-card-title">Devis généré</div>
         <div class="devis-card-total">${Number(extra.total).toLocaleString('fr-FR')} FCFA</div>
-        <div class="devis-card-sub">${extra.client} · ${extra.numero}</div>
+        <div class="devis-card-sub">${echapperHTML(extra.client)} · ${echapperHTML(extra.numero)}</div>
         <div class="devis-card-actions">
-          <button class="card-btn primary"   onclick="voirPDF('${extra.devis_id}')">📄 Voir PDF</button>
-          <button class="card-btn secondary" onclick="partagerWhatsApp('${extra.devis_id}', '${extra.phone}', '${extra.total}', '${extra.client}')">💬 WhatsApp</button>
+          <button class="card-btn primary"   onclick="voirPDF('${echapperJS(extra.devis_id)}')">📄 Voir PDF</button>
+          <button class="card-btn secondary" onclick="partagerWhatsApp('${echapperJS(extra.devis_id)}', '${echapperJS(extra.phone)}', '${echapperJS(extra.total)}', '${echapperJS(extra.client)}')">💬 WhatsApp</button>
         </div>
         ${emailRow}
       </div>`;
@@ -236,8 +265,21 @@ function autoResize(el)   { el.style.height = 'auto'; el.style.height = Math.min
 function handleKey(e)     { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
 
 // ── PDF & PARTAGE ──────────────────────────────────────────────
-function voirPDF(devisId) {
-  window.open(Api.getPdfUrl(devisId), '_blank');
+// [L1] Le PDF est récupéré via fetch + en-tête Authorization (plus de token en
+// query string : il finissait dans les access logs Render/Cloudflare,
+// l'historique du navigateur et le Referer). On ouvre l'onglet AVANT l'await
+// pour ne pas être bloqué par le bloqueur de pop-ups.
+async function voirPDF(devisId) {
+  const win = window.open('', '_blank');
+  try {
+    const blob = await Api.getPdfBlob(devisId);
+    const url  = URL.createObjectURL(blob);
+    if (win) win.location = url; else window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    if (win) win.close();
+    alert("Impossible d'ouvrir le PDF. Réessaie.");
+  }
 }
 
 // ✅ v4.3 : génère un lien public signé 7j puis ouvre WhatsApp
@@ -530,37 +572,39 @@ async function loadDevisScreen() {
     devis.forEach(d => {
       const email      = (d.client_email || '').trim();
       const hasEmail   = email.includes('@');
-      const phone      = (d.client_telephone || '').replace(/'/g, '');
-      const client     = (d.client_nom || '').replace(/'/g, '');
+      // Plus de `.replace(/'/g,'')` (ne retirait que les apostrophes, pas < > ") :
+      // toute injection dans un onclick passe désormais par echapperJS().
+      const phone      = d.client_telephone || '';
+      const client     = d.client_nom || '';
 
       // Un devis "marqué payé" devient une facture : le badge affiche alors le
       // numéro de facture, et le bouton "Marquer payé" disparaît (action déjà faite).
       const estFacture = !!d.numero_facture;
       const badgeHtml  = estFacture
-        ? `<div style="margin-top:8px;"><span class="devis-badge">Facture ${d.numero_facture}</span></div>`
-        : `<div style="margin-top:8px;"><span class="devis-badge">${d.statut || '—'}</span></div>`;
+        ? `<div style="margin-top:8px;"><span class="devis-badge">Facture ${echapperHTML(d.numero_facture)}</span></div>`
+        : `<div style="margin-top:8px;"><span class="devis-badge">${echapperHTML(d.statut || '—')}</span></div>`;
       const payeHtml   = estFacture
         ? ''
         : `<div class="devis-card-actions">
           <button class="card-btn secondary" style="flex:1"
-                  onclick="marquerPaye('${d.id}')">💰 Marquer payé</button>
+                  onclick="marquerPaye('${echapperJS(d.id)}')">💰 Marquer payé</button>
         </div>`;
 
       const card = document.createElement('div');
       card.className = 'devis-card';
       card.innerHTML = `
-        <div class="devis-card-title">${d.numero || 'Devis'}</div>
+        <div class="devis-card-title">${echapperHTML(d.numero || 'Devis')}</div>
         <div class="devis-card-total">${Number(d.total || 0).toLocaleString('fr-FR')} FCFA</div>
-        <div class="devis-card-sub">${d.client_nom || ''}</div>
+        <div class="devis-card-sub">${echapperHTML(d.client_nom || '')}</div>
         <div class="devis-card-date">${formatDateFr(d.created_at)}</div>
         ${badgeHtml}
         <div class="devis-card-actions">
-          <button class="card-btn primary"   onclick="voirPDF('${d.id}')">📄 Voir PDF</button>
-          <button class="card-btn secondary" onclick="partagerWhatsApp('${d.id}', '${phone}', '${d.total}', '${client}')">💬 WhatsApp</button>
+          <button class="card-btn primary"   onclick="voirPDF('${echapperJS(d.id)}')">📄 Voir PDF</button>
+          <button class="card-btn secondary" onclick="partagerWhatsApp('${echapperJS(d.id)}', '${echapperJS(phone)}', '${echapperJS(d.total)}', '${echapperJS(client)}')">💬 WhatsApp</button>
         </div>
         ${hasEmail ? `<div class="devis-card-actions">
           <button class="card-btn secondary" style="flex:1"
-                  onclick="envoyerParMail('${d.id}', '${email}', this)">📧 Envoyer par mail</button>
+                  onclick="envoyerParMail('${echapperJS(d.id)}', '${echapperJS(email)}', this)">📧 Envoyer par mail</button>
         </div>` : ''}
         ${payeHtml}`;
       list.appendChild(card);

@@ -351,6 +351,37 @@ let devisPage    = 1;
 let allCodes     = [];
 let codesFilter  = 'all';
 
+// ── ÉCHAPPEMENT (anti-XSS stocké — C-1) ──────────────────────
+// echapperHTML : pour toute donnée utilisateur (a.nom, a.prenom, a.telephone,
+// a.metier, d.client_nom, d.objet, d.numero, statuts, plans, codes, n° WhatsApp…)
+// insérée via innerHTML — que ce soit dans du texte ou dans un contenu
+// d'attribut délimité par des guillemets doubles.
+function echapperHTML(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+// echapperJS : pour une donnée utilisateur injectée DANS une chaîne JS
+// elle-même à l'intérieur d'un attribut onclick="fn('...')". C'est un point
+// d'injection DISTINCT de l'innerHTML classique : une apostrophe casse la
+// chaîne JS, et un &#39; y serait re-décodé en ' par le parseur HTML AVANT
+// exécution du JS. On neutralise donc à la fois le contexte JS (\ ' \r \n) ET
+// le contexte attribut HTML (" & < >), sans jamais produire de ' littéral.
+function echapperJS(v) {
+  return String(v == null ? '' : v)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 // ── AUTH ──
 async function adminLogin() {
   const pass = document.getElementById('admin-pass').value;
@@ -430,13 +461,13 @@ async function loadDashboard() {
     const colors={gratuit:'#8A97A8',starter:'#1A3A5C',pro:'#C9952B'};
     document.getElementById('plans-chart').innerHTML = data.plans.map(p=>`
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-        <div style="width:100px;font-size:13px;font-weight:600;color:var(--dark);text-transform:capitalize;">${p.plan}</div>
+        <div style="width:100px;font-size:13px;font-weight:600;color:var(--dark);text-transform:capitalize;">${echapperHTML(p.plan)}</div>
         <div style="flex:1;background:var(--lgray);border-radius:6px;height:10px;overflow:hidden;">
           <div style="width:${Math.round(p.count/data.total_artisans*100)}%;background:${colors[p.plan]||'#1A3A5C'};height:100%;border-radius:6px;"></div>
         </div>
         <div style="font-size:13px;font-weight:700;color:var(--blue);width:30px;text-align:right;">${p.count}</div>
       </div>`).join('') || '<div class="empty">Aucune donnée</div>';
-  } catch(err) { document.getElementById('stats-grid').innerHTML=`<div class="loading">Erreur : ${err.message}</div>`; }
+  } catch(err) { document.getElementById('stats-grid').innerHTML=`<div class="loading">Erreur : ${echapperHTML(err.message)}</div>`; }
 }
 
 // ── CODES D'ACTIVATION ──
@@ -478,23 +509,23 @@ function renderCodes() {
 
   container.innerHTML = filtered.map(c=>{
     const phoneHtml = c.artisan_tel
-      ? `<div class="code-phone"><i class="ti ti-device-mobile" style="font-size:12px;"></i>${c.artisan_tel}${c.artisan_nom?' — '+c.artisan_nom:''}</div>`
+      ? `<div class="code-phone"><i class="ti ti-device-mobile" style="font-size:12px;"></i>${echapperHTML(c.artisan_tel)}${c.artisan_nom?' — '+echapperHTML(c.artisan_nom):''}</div>`
       : `<div class="code-phone empty"><i class="ti ti-device-mobile" style="font-size:12px;"></i>Non assigné</div>`;
     const waLink = c.artisan_tel ? buildWALink(c.artisan_tel, c.code) : null;
-    const btnWA  = waLink ? `<a class="btn btn-wa btn-sm" href="${waLink}" target="_blank"><i class="ti ti-brand-whatsapp"></i> Envoyer</a>` : '';
+    const btnWA  = waLink ? `<a class="btn btn-wa btn-sm" href="${echapperHTML(waLink)}" target="_blank"><i class="ti ti-brand-whatsapp"></i> Envoyer</a>` : '';
     return `
       <div class="code-item fadeIn">
         <div class="code-item-top">
           <div class="code-item-left">
-            <div class="code-val">${c.code}</div>
+            <div class="code-val">${echapperHTML(c.code)}</div>
             ${phoneHtml}
             <div class="code-meta">Créé le ${formatDate(c.created_at)}${c.used_at?' · Utilisé le '+formatDate(c.used_at):''}</div>
           </div>
           <div class="code-actions">
             <span class="badge ${c.used?'badge-used':'badge-unused'}">${c.used?'✓ Utilisé':'⏳ Libre'}</span>
-            ${!c.used?`<button class="btn btn-secondary btn-sm btn-icon" onclick="copier('${c.code}')" title="Copier"><i class="ti ti-copy"></i></button>`:''}
+            ${!c.used?`<button class="btn btn-secondary btn-sm btn-icon" onclick="copier('${echapperJS(c.code)}')" title="Copier"><i class="ti ti-copy"></i></button>`:''}
             ${btnWA}
-            <button class="btn btn-danger btn-sm btn-icon" onclick="deleteCode('${c.id}','${c.code}')" title="Supprimer"><i class="ti ti-trash"></i></button>
+            <button class="btn btn-danger btn-sm btn-icon" onclick="deleteCode('${echapperJS(c.id)}','${echapperJS(c.code)}')" title="Supprimer"><i class="ti ti-trash"></i></button>
           </div>
         </div>
       </div>`;
@@ -587,35 +618,35 @@ async function loadArtisans(page) {
       }
 
       let btnVal='';
-      if(a.statut==='en_attente') btnVal=`<button class="btn btn-green btn-sm" onclick="updateStatut('${a.id}','actif')">✅ Valider</button>`;
-      else if(a.statut==='actif') btnVal=`<button class="btn btn-danger btn-sm" onclick="updateStatut('${a.id}','suspendu')">🚫</button>`;
-      else if(a.statut==='suspendu') btnVal=`<button class="btn btn-green btn-sm" onclick="renouvelerArtisan('${a.id}','${a.nom}')">🔄 Renouveler</button>`;
+      if(a.statut==='en_attente') btnVal=`<button class="btn btn-green btn-sm" onclick="updateStatut('${echapperJS(a.id)}','actif')">✅ Valider</button>`;
+      else if(a.statut==='actif') btnVal=`<button class="btn btn-danger btn-sm" onclick="updateStatut('${echapperJS(a.id)}','suspendu')">🚫</button>`;
+      else if(a.statut==='suspendu') btnVal=`<button class="btn btn-green btn-sm" onclick="renouvelerArtisan('${echapperJS(a.id)}','${echapperJS(a.nom)}')">🔄 Renouveler</button>`;
 
       // Bouton WhatsApp rappel (visible si actif et expire dans ≤ 3 jours)
       const btnRappelWA = (a.statut==='actif' && a.expires_at && joursRestants !== null && joursRestants <= 3)
-        ? `<a class="btn btn-amber btn-sm" href="${buildWARappelLink(a.telephone,a.nom,a.expires_at)}" target="_blank" title="Envoyer rappel WhatsApp"><i class="ti ti-brand-whatsapp"></i> Rappel</a>`
+        ? `<a class="btn btn-amber btn-sm" href="${echapperHTML(buildWARappelLink(a.telephone,a.nom,a.expires_at))}" target="_blank" title="Envoyer rappel WhatsApp"><i class="ti ti-brand-whatsapp"></i> Rappel</a>`
         : '';
 
       return `<tr>
-        <td><div class="td-name">${a.nom} ${a.prenom||''}</div><div class="td-sub">${a.id.slice(0,8)}...</div></td>
-        <td>${a.telephone}</td><td>${a.metier}</td>
-        <td><select class="plan-select" onchange="updatePlan('${a.id}',this.value)">
+        <td><div class="td-name">${echapperHTML(a.nom)} ${echapperHTML(a.prenom||'')}</div><div class="td-sub">${echapperHTML(String(a.id).slice(0,8))}...</div></td>
+        <td>${echapperHTML(a.telephone)}</td><td>${echapperHTML(a.metier)}</td>
+        <td><select class="plan-select" onchange="updatePlan('${echapperJS(a.id)}',this.value)">
           <option value="gratuit" ${a.plan==='gratuit'?'selected':''}>Gratuit</option>
           <option value="starter" ${a.plan==='starter'?'selected':''}>Starter</option>
           <option value="pro"     ${a.plan==='pro'    ?'selected':''}>Pro</option>
         </select></td>
-        <td><strong>${a.devis_count}</strong></td>
-        <td><span style="display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700;${statutStyle}">${statutLabel}</span></td>
+        <td><strong>${echapperHTML(a.devis_count)}</strong></td>
+        <td><span style="display:inline-block;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:700;${statutStyle}">${echapperHTML(statutLabel)}</span></td>
         <td>${expireBadge}</td>
         <td style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;">
           ${btnVal}
           ${btnRappelWA}
-          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteArtisan('${a.id}','${a.nom}')"><i class="ti ti-trash"></i></button>
+          <button class="btn btn-danger btn-sm btn-icon" onclick="deleteArtisan('${echapperJS(a.id)}','${echapperJS(a.nom)}')"><i class="ti ti-trash"></i></button>
         </td>
       </tr>`;
     }).join('');
     renderPagination('artisans-pagination',data.total,data.limit,artisansPage,loadArtisans);
-  } catch(err){document.getElementById('artisans-tbody').innerHTML=`<tr><td colspan="8" class="loading">Erreur : ${err.message}</td></tr>`;}
+  } catch(err){document.getElementById('artisans-tbody').innerHTML=`<tr><td colspan="8" class="loading">Erreur : ${echapperHTML(err.message)}</td></tr>`;}
 }
 
 async function updatePlan(id,plan) { try{await apiPut(`/api/admin/artisans/${id}/plan`,{plan});}catch{showToast('Erreur','error');} }
@@ -649,11 +680,11 @@ async function loadDevis(page) {
     const tbody=document.getElementById('devis-tbody');
     if(!data.devis.length){tbody.innerHTML=`<tr><td colspan="6"><div class="empty">Aucun devis</div></td></tr>`;return;}
     tbody.innerHTML=data.devis.map(d=>`<tr>
-      <td><strong>${d.numero||'—'}</strong></td>
-      <td><div class="td-name">${d.client_nom}</div><div class="td-sub">${d.objet||''}</div></td>
-      <td><div>${d.artisan_nom}</div><div class="td-sub">${d.artisan_tel}</div></td>
+      <td><strong>${echapperHTML(d.numero||'—')}</strong></td>
+      <td><div class="td-name">${echapperHTML(d.client_nom)}</div><div class="td-sub">${echapperHTML(d.objet||'')}</div></td>
+      <td><div>${echapperHTML(d.artisan_nom)}</div><div class="td-sub">${echapperHTML(d.artisan_tel)}</div></td>
       <td><strong>${Number(d.total).toLocaleString('fr-FR')} FCFA</strong></td>
-      <td><span style="background:rgba(56,161,105,0.12);color:#276749;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;">${d.statut}</span></td>
+      <td><span style="background:rgba(56,161,105,0.12);color:#276749;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;">${echapperHTML(d.statut)}</span></td>
       <td>${formatDate(d.created_at)}</td>
     </tr>`).join('');
     renderPagination('devis-pagination',data.total,data.limit,devisPage,loadDevis);
@@ -676,8 +707,8 @@ async function loadLogs() {
     alerts.innerHTML = !data.alerts?.length
       ? `<div class="alert-row ok"><span class="alert-icon">✅</span><span>Aucune alerte active</span></div>`
       : data.alerts.map(a=>parseInt(a.count)>0
-          ? `<div class="alert-row ${alertClasses[a.type]||''}"><span class="alert-icon">${alertIcons[a.type]||'⚠️'}</span><span class="alert-text"><strong>${a.count}</strong> × ${a.type}</span></div>`
-          : `<div class="alert-row ok"><span class="alert-icon">✅</span><span class="alert-text">${a.type} : OK</span></div>`
+          ? `<div class="alert-row ${alertClasses[a.type]||''}"><span class="alert-icon">${alertIcons[a.type]||'⚠️'}</span><span class="alert-text"><strong>${echapperHTML(a.count)}</strong> × ${echapperHTML(a.type)}</span></div>`
+          : `<div class="alert-row ok"><span class="alert-icon">✅</span><span class="alert-text">${echapperHTML(a.type)} : OK</span></div>`
         ).join('');
   } catch(err){document.getElementById('logs-grid').innerHTML=`<div class="loading">Erreur</div>`;}
 }

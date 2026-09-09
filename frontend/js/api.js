@@ -52,9 +52,19 @@ const Api = {
   // (statut 'paye' + numero_facture). Idempotent côté serveur.
   marquerPaye(devisId) { return this.request('PUT', `/api/devis/${devisId}/marquer-paye`); },
 
-  // URL PDF privée avec token (pour visualisation personnelle)
-  getPdfUrl(devisId) {
-    return `${API_BASE}/api/devis/${devisId}/pdf?token=${encodeURIComponent(this.token)}`;
+  // [L1] Récupération du PDF privé par fetch + en-tête Authorization. Le token
+  // ne transite PLUS en query string : il finissait dans les access logs
+  // Render/Cloudflare, l'historique du navigateur, les favoris et le Referer.
+  async getPdfBlob(devisId) {
+    const headers = {};
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+    const res = await fetch(`${API_BASE}/api/devis/${devisId}/pdf`, { headers });
+    if (!res.ok) {
+      const err = new Error('Impossible de charger le PDF');
+      err.status = res.status;
+      throw err;
+    }
+    return res.blob();
   },
 
   // ✅ v4.3 : génère un lien de partage public 7j pour WhatsApp
