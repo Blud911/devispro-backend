@@ -1022,9 +1022,16 @@ app.post('/api/bot/message', authMiddleware, async (req, res) => {
   if (history && !Array.isArray(history)) {
     return res.status(400).json({ error: 'Historique invalide' });
   }
+  // On exclut aussi les messages au contenu vide (pas seulement les rôles
+  // invalides ou trop longs) : le frontend a pu pousser une fois un message
+  // assistant vide (si `clean` était vide à un tour précédent). Réinjecté tel
+  // quel, il faisait échouer l'appel Mistral suivant avec l'erreur "Assistant
+  // message must have either content or tool_calls, but not none" (code 3240,
+  // observée en prod à deux reprises).
   const safeHistory = (history || []).slice(-20).filter(h =>
     h && (h.role === 'user' || h.role === 'assistant') &&
-    typeof h.content === 'string' && h.content.length <= 2000
+    typeof h.content === 'string' && h.content.trim().length > 0 &&
+    h.content.length <= 2000
   );
 
   try {
@@ -1189,7 +1196,16 @@ ${JSON.stringify(devis_draft || {}, null, 2)}`;
       return res.json({ reply: '✅ Parfait ! Je prépare ton devis...', action, draft });
     }
 
-    res.json({ reply: clean, action: null, draft });
+    // Défense en profondeur à la source : ne jamais renvoyer une réponse vide
+    // au frontend (qui la repousserait ensuite comme message assistant vide
+    // dans l'historique — cf. filtre safeHistory / erreur Mistral 3240).
+    // Indépendant de ce filtre : on corrige ici, au point d'émission.
+    let replyText = clean;
+    if (replyText.trim().length === 0) {
+      replyText = "Je n'ai pas bien compris, peux-tu reformuler ?";
+    }
+
+    res.json({ reply: replyText, action: null, draft });
 
   } catch (err) {
     console.error('[BOT]', err);
