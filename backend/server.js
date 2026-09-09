@@ -299,20 +299,31 @@ function buildDevisPDF({ artisan, numero, numero_facture, reference_bien, client
     const typeDoc       = estFacture ? 'FACTURE' : 'DEVIS';
     const numeroAffiche = estFacture ? numero_facture : numero;
 
+    // Préfixe redondant retiré à l'affichage : typeDoc ("FACTURE"/"DEVIS") dit
+    // déjà de quoi il s'agit, le "FACT-"/"DEV-" en tête du numéro faisait doublon.
+    // Le numéro complet (avec préfixe) reste stocké tel quel en base — seul
+    // l'affichage sur le PDF est raccourci.
+    const prefixe     = estFacture ? 'FACT-' : 'DEV-';
+    const numeroCourt = numeroAffiche.startsWith(prefixe)
+      ? numeroAffiche.slice(prefixe.length)
+      : numeroAffiche;
+
     // ── En-tête ───────────────────────────────────────────────
     doc.rect(0, 0, 595, 90).fill(BLUE);
     doc.fillColor(WHITE).fontSize(22).font('Helvetica-Bold').text(artisan.nom_entreprise || 'DevisPro CI', 50, 20);
     doc.fontSize(10).font('Helvetica')
        .text(`${artisan.nom} ${artisan.prenom || ''} — ${artisan.metier}`, 50, 48)
        .text(`Tél : ${artisan.telephone}`, 50, 62);
-    // fontSize 9 (et non 10) pour cette ligne uniquement : "FACTURE FACT-xxxxxxxxxxxxx"
-    // fait ~137,5 pt en Helvetica-Bold 9 (calcul de largeur de glyphes AFM) et tient
-    // donc sur une seule ligne dans les 145 px ; à fontSize 10 il faisait ~152,8 pt et
-    // débordait sur deux lignes, chevauchant "Date : ...". Date/Validité décalés de
-    // 2 px vers le bas pour garder de la marge même si le texte du dessus repassait
-    // un jour sur deux lignes.
-    doc.fillColor(GOLD).fontSize(9).font('Helvetica-Bold')
-       .text(`${typeDoc} ${numeroAffiche}`, 400, 30, { align: 'right', width: 145 });
+    // Retour à fontSize 10 (taille d'origine) : le préfixe "FACT-"/"DEV-" retiré
+    // à l'affichage, la ligne la plus longue est désormais "FACTURE 1736441234567"
+    // (typeDoc + espace + timestamp 13 chiffres) ≈ 122,8 pt en Helvetica-Bold 10
+    // (largeur de glyphes AFM : F/A/C/T/U/R/E = 4777, espace = 278, 13 × 556 =
+    // 7228 ; total 12283/1000 × 10). Ça tient dans les 145 px avec ~22 pt de
+    // marge, alors qu'avec le préfixe "FACTURE FACT-xxxxxxxxxxxxx" ça faisait
+    // ~152,8 pt et débordait sur deux lignes en chevauchant "Date : ...".
+    // Date/Validité restent à fontSize 9 et +2 px comme avant, marge de sécurité.
+    doc.fillColor(GOLD).fontSize(10).font('Helvetica-Bold')
+       .text(`${typeDoc} ${numeroCourt}`, 400, 30, { align: 'right', width: 145 });
     doc.fillColor(WHITE).font('Helvetica').fontSize(9)
        .text(`Date : ${new Date().toLocaleDateString('fr-FR')}`, 400, 50, { align: 'right', width: 145 })
        .text('Validité : 30 jours', 400, 64, { align: 'right', width: 145 });
@@ -399,7 +410,12 @@ function buildDevisPDF({ artisan, numero, numero_facture, reference_bien, client
     doc.rect(50, y, pageW, 40).fill(GRAY);
     doc.fillColor('#555555').fontSize(8).font('Helvetica')
        .text('Paiement accepté : Wave CI · Orange Money · MTN Mobile Money', 60, y + 8)
-       .text("Ce devis est valable 30 jours à compter de sa date d'émission.", 60, y + 22);
+       .text(
+         estFacture
+           ? 'Facture acquittée.'
+           : "Ce devis est valable 30 jours à compter de sa date d'émission.",
+         60, y + 22
+       );
     doc.fillColor(GOLD).fontSize(7).font('Helvetica')
        .text('Généré par DevisPro CI', 50, 820, { align: 'center', width: pageW });
 
