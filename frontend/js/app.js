@@ -140,7 +140,7 @@ function showQuotaBanner(restants) {
 }
 
 function showUpgradeMessage() {
-  appendMessage('bot', "Pour continuer, abonnez-vous au plan Starter à 1 000 FCFA/mois.\n\nContactez l'administrateur par WhatsApp pour activer votre abonnement.");
+  appendMessage('bot', `Pour continuer, abonne-toi au plan Starter à 1 000 FCFA/mois.\n\nEnvoie le paiement via Wave CI ou Orange Money au ${window.DEVISPRO_PAYMENT_NUMBER}, puis clique ci-dessous pour prévenir l'administrateur.`);
   setQuickReplies(['Contacter via WhatsApp']);
 }
 
@@ -623,8 +623,14 @@ async function loadProfilScreen() {
     // (starter/pro). Le plan gratuit n'a pas d'abonnement à renouveler — juste
     // un quota à dépasser, déjà couvert par le bouton "Contacter via WhatsApp"
     // côté quota.
-    const renewBtn = document.getElementById('profil-renew-btn');
-    if (renewBtn) renewBtn.style.display = p.plan && p.plan !== 'gratuit' ? '' : 'none';
+    const renewBtn  = document.getElementById('profil-renew-btn');
+    const renewInfo = document.getElementById('profil-renew-info');
+    const estPayant = p.plan && p.plan !== 'gratuit';
+    if (renewBtn)  renewBtn.style.display  = estPayant ? '' : 'none';
+    if (renewInfo) {
+      renewInfo.style.display = estPayant ? '' : 'none';
+      renewInfo.textContent   = `Paiement via Wave CI / Orange Money : ${window.DEVISPRO_PAYMENT_NUMBER}`;
+    }
   } catch (err) {
     if (msg) {
       msg.textContent   = 'Impossible de charger le profil. Réessaie.';

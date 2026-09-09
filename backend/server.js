@@ -36,6 +36,11 @@ const app         = express();
 const PORT        = process.env.PORT || 3000;
 const BACKEND_URL = process.env.BACKEND_URL || 'https://blud911-devispro-backend.onrender.com';
 
+// Numéro de paiement communiqué à l'artisan quand son quota gratuit est dépassé.
+// Équivalent backend de window.DEVISPRO_PAYMENT_NUMBER (frontend/js/config.js) :
+// le backend n'a pas accès aux variables window.*, on centralise donc ici.
+const PAYMENT_NUMBER = '0759942496'; // Wave CI / Orange Money
+
 // ── Formatage FCFA ─────────────────────────────────────────────
 function fcfa(n) {
   return String(Math.round(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
@@ -1061,7 +1066,7 @@ app.post('/api/bot/message', authMiddleware, async (req, res) => {
     }
     if (artisan.plan === 'gratuit' && artisan.devis_count >= 3) {
       return res.json({
-        reply: `🔒 Vous avez utilisé vos 3 devis gratuits.\n\nAbonnez-vous au plan Starter (1 000 FCFA/mois) via Wave CI ou Orange Money.\n\nContactez l'administrateur par WhatsApp pour activer votre abonnement.`,
+        reply: `🔒 Vous avez utilisé vos 3 devis gratuits.\n\nPour continuer, abonnez-vous au plan Starter à 1 000 FCFA/mois.\n\nEnvoyez le paiement via Wave CI ou Orange Money au ${PAYMENT_NUMBER}, puis contactez l'administrateur par WhatsApp.`,
         action: null,
         quota_depasse: true
       });
